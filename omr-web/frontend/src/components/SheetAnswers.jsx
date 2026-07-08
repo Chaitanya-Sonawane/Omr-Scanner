@@ -31,17 +31,18 @@ export default function SheetAnswers({ sessionId, sheet }) {
 
       <div className={styles.grid}>
         {questions.map(q => {
-          const isMulti = q.marked === 'MULTI'
+          const isMulti  = q.marked === 'MULTI'
+          const isBlank  = !q.marked || q.marked === ''
           const cellClass = isMulti
             ? styles.multi
-            : q.marked === '' ? styles.blank
-            : q.is_correct ? styles.correct : styles.wrong
+            : q.is_correct ? styles.correct : styles.wrong   // blank = wrong (red)
           return (
             <div key={q.q_no} className={`${styles.cell} ${cellClass}`}>
               <span className={styles.qno}>Q{q.q_no}</span>
-              <span className={styles.marked}>{q.marked || '—'}</span>
+              <span className={styles.marked}>{isBlank ? '—' : q.marked}</span>
               {isMulti && <span className={styles.hint}>MULTI</span>}
-              {!isMulti && q.marked !== '' && !q.is_correct && (
+              {/* show correct answer for wrong OR blank questions */}
+              {!isMulti && !q.is_correct && (
                 <span className={styles.hint}>✓{q.correct}</span>
               )}
             </div>
