@@ -1,6 +1,13 @@
 import axios from 'axios'
 
+// Regular API calls go through the Netlify /api proxy (see netlify.toml)
 const BASE = '/api'
+
+// SSE (EventSource) cannot follow Netlify redirects, so it hits Render directly.
+// VITE_API_URL is set in Netlify env vars to https://omr-scanner-1-cmbe.onrender.com
+const SSE_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : BASE
 
 export const createSession = () =>
   axios.post(`${BASE}/session`).then(r => r.data.session_id)
@@ -23,6 +30,7 @@ export const uploadSheets = (sessionId, files, names = []) => {
   if (names.some(n => n)) fd.append('names', names.join(','))
   return axios.post(`${BASE}/session/${sessionId}/sheets`, fd).then(r => r.data)
 }
+
 export const getStatus = (sessionId) =>
   axios.get(`${BASE}/session/${sessionId}/status`).then(r => r.data)
 
@@ -49,10 +57,11 @@ export const getRawDetection = (sessionId, sheetId) =>
 
 /**
  * Open an SSE connection for live sheet processing updates.
+ * Uses SSE_BASE (direct Render URL) since EventSource can't follow redirects.
  * Returns a close() function.
  */
 export const openProgressStream = (sessionId, onEvent, onComplete) => {
-  const es = new EventSource(`${BASE}/session/${sessionId}/progress`)
+  const es = new EventSource(`${SSE_BASE}/session/${sessionId}/progress`)
   es.onmessage = e => {
     const data = JSON.parse(e.data)
     if (data.type === 'BATCH_COMPLETE') {
