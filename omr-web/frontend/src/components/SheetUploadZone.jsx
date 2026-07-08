@@ -2,15 +2,61 @@ import React, { useState, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import styles from './SheetUploadZone.module.css'
 
+const MAX_PX = 1400   // max dimension — enough for OMR detection, small enough to upload fast
+const JPEG_Q = 0.82   // JPEG quality
+
+/**
+ * Compress an image File to at most MAX_PX on the longest side.
+ * PDFs are returned unchanged (server handles them).
+ */
+function compressImage(file) {
+  if (file.type === 'application/pdf') return Promise.resolve(file)
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      let { width, height } = img
+      // Skip if already small
+      if (width <= MAX_PX && height <= MAX_PX && file.size < 400 * 1024) {
+        return resolve(file)
+      }
+      const scale = Math.min(1, MAX_PX / Math.max(width, height))
+      width  = Math.round(width  * scale)
+      height = Math.round(height * scale)
+      const canvas = document.createElement('canvas')
+      canvas.width  = width
+      canvas.height = height
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+      canvas.toBlob(
+        (blob) => {
+          resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
+            type: 'image/jpeg',
+            lastModified: file.lastModified,
+          }))
+        },
+        'image/jpeg',
+        JPEG_Q
+      )
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.src = url
+  })
+}
+
 export default function SheetUploadZone({ disabled, onProcess }) {
   const [files, setFiles] = useState([])
-  const [names, setNames] = useState([])   // parallel array: names[i] = student name for files[i]
+  const [names, setNames] = useState([])
   const [showNames, setShowNames] = useState(false)
+  const [compressing, setCompressing] = useState(false)
 
-  const onDrop = useCallback((accepted) => {
+  const onDrop = useCallback(async (accepted) => {
+    setCompressing(true)
+    const compressed = await Promise.all(accepted.map(compressImage))
+    setCompressing(false)
     setFiles(prev => {
       const existing = new Set(prev.map(f => f.name))
-      const novel = accepted.filter(f => !existing.has(f.name))
+      const novel = compressed.filter(f => !existing.has(f.name))
       const next = [...prev, ...novel].slice(0, 50)
       setNames(n => {
         const extended = [...n]
@@ -25,7 +71,7 @@ export default function SheetUploadZone({ disabled, onProcess }) {
     onDrop,
     accept: { 'image/*': ['.png', '.jpg', '.jpeg'], 'application/pdf': ['.pdf'] },
     multiple: true,
-    disabled,
+    disabled: disabled || compressing,
   })
 
   const remove = (idx) => {
@@ -48,10 +94,12 @@ export default function SheetUploadZone({ disabled, onProcess }) {
 
       <div
         {...getRootProps()}
-        className={`${styles.dropzone} ${isDragActive ? styles.active : ''} ${disabled ? styles.disabled : ''}`}
+        className={`${styles.dropzone} ${isDragActive ? styles.active : ''} ${(disabled || compressing) ? styles.disabled : ''}`}
       >
         <input {...getInputProps()} />
-        {isDragActive
+        {compressing
+          ? <p>Compressing images…</p>
+          : isDragActive
           ? <p>Drop sheets here</p>
           : <p>Drag &amp; drop up to 50 sheets or <strong>click to browse</strong><br /><span className={styles.hint}>PNG · JPG · PDF &nbsp;|&nbsp; max 50 files</span></p>
         }
@@ -98,7 +146,7 @@ export default function SheetUploadZone({ disabled, onProcess }) {
             <span className={styles.count}>{files.length} / 50 files</span>
             <button
               className="btn-success"
-              disabled={disabled || files.length === 0}
+              disabled={disabled || compressing || files.length === 0}
               onClick={handleProcess}
             >
               Process Sheets →
