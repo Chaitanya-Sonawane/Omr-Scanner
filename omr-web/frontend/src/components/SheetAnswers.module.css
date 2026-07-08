@@ -23,6 +23,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  min-width: 0;
 }
 
 .score {
@@ -33,6 +34,7 @@
   padding: 4px 12px;
   border-radius: 20px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .grid {
@@ -80,7 +82,15 @@
   .marked { font-size: 15px; }
 }
 
-@media (max-width: 420px) {
-  .grid { grid-template-columns: repeat(5, 1fr); }
-  .cell { min-height: 52px; }
+@media (max-width: 480px) {
+  .grid { grid-template-columns: repeat(6, 1fr); gap: 4px; }
+  .cell { min-height: 52px; padding: 5px 1px; }
+  .qno { font-size: 8px; }
+  .marked { font-size: 14px; }
+  .hint { font-size: 8px; }
+}
+
+@media (max-width: 360px) {
+  .grid { grid-template-columns: repeat(5, 1fr); gap: 3px; padding: 8px; }
+  .cell { min-height: 50px; }
 }

@@ -27,9 +27,19 @@ body {
   color: var(--text);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+  /* Prevent horizontal scroll on mobile */
+  overflow-x: hidden;
 }
 
 #root { min-height: 100vh; }
+
+/* Safe area support for notched phones */
+@supports (padding: max(0px)) {
+  .header {
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
+  }
+}
 
 button {
   cursor: pointer;
@@ -42,6 +52,9 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* Minimum touch target for mobile */
+  min-height: 44px;
+  touch-action: manipulation;
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 

@@ -44,10 +44,25 @@
 }
 
 @media (max-width: 600px) {
+  .card { padding: 14px 12px; }
   .header { flex-direction: column; }
-  .exportBtns { width: 100%; }
-  .exportBtns a { flex: 1; }
-  .exportBtns button { width: 100%; justify-content: center; }
+  .exportBtns {
+    width: 100%;
+    flex-direction: column;
+  }
+  .exportBtns a {
+    width: 100%;
+    display: block;
+  }
+  .exportBtns a button,
+  .exportBtns button {
+    width: 100%;
+    justify-content: center;
+  }
+  .newSessionBtn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .newSessionBtn {
