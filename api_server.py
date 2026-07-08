@@ -43,9 +43,18 @@ except ImportError as e:
 app = FastAPI(title="OMR Scanner API")
 
 # CORS Configuration
+# Allow localhost for dev + any Netlify domain for production
+# Set ALLOWED_ORIGINS env var on Render to your exact Netlify URL if needed
+_raw_origins = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000"
+)
+_allow_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_allow_origins,
+    allow_origin_regex=r"https://.*\.netlify\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -921,8 +930,6 @@ async def export_all_students_pdf():
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting OMR Scanner API Server...")
-    print("📡 API will be available at: http://localhost:8000")
-    print("📚 API docs at: http://localhost:8000/docs")
-    print("🌐 Frontend should run at: http://localhost:3000")
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    print(f"🚀 Starting OMR Scanner API Server on port {port}...")
+    uvicorn.run("api_server:app", host="0.0.0.0", port=port, reload=False)
