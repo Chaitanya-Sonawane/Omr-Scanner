@@ -1,0 +1,105 @@
+{
+  "session_id": "205bcac1-d990-4870-8c1b-203b6f4c86e1",
+  "created_at": "2026-07-07T14:41:49.384332",
+  "answer_key": {
+    "q1": "A",
+    "q2": "A",
+    "q3": "A",
+    "q4": "A",
+    "q5": "A",
+    "q6": "B",
+    "q7": "C",
+    "q8": "D",
+    "q9": "C",
+    "q10": "B",
+    "q11": "A",
+    "q12": "B",
+    "q13": "C",
+    "q14": "D",
+    "q15": "A",
+    "q16": "B",
+    "q17": "C",
+    "q18": "D",
+    "q19": "A",
+    "q20": "B",
+    "q21": "A",
+    "q22": "B",
+    "q23": "B",
+    "q24": "C",
+    "q25": "C",
+    "q26": "D",
+    "q27": "D",
+    "q28": "C",
+    "q29": "B",
+    "q30": "C",
+    "q31": "A",
+    "q32": "B",
+    "q33": "A",
+    "q34": "B",
+    "q35": "C",
+    "q36": "D",
+    "q37": "B",
+    "q38": "A",
+    "q39": "A",
+    "q40": "C"
+  },
+  "sheets": [
+    {
+      "sheet_id": "001",
+      "filename": "1000409810.pdf",
+      "raw_path": "data/sessions/205bcac1-d990-4870-8c1b-203b6f4c86e1/sheets/001_raw.pdf",
+      "status": "DONE",
+      "student_id": "Sheet-1",
+      "score": {
+        "total": 11
+      },
+      "error": "Error: 'NoneType' object has no attribute 'copy'",
+      "sheet_confidence": null,
+      "detection_file": "sheets/001_detection.json"
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.24.jpeg",
+      "raw_path": "data/sessions/205bcac1-d990-4870-8c1b-203b6f4c86e1/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23(1).jpeg",
+      "raw_path": "data/sessions/205bcac1-d990-4870-8c1b-203b6f4c86e1/sheets/002_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-2",
+      "score": {
+        "total": 11
+      },
+      "error": null,
+      "sheet_confidence": null,
+      "detection_file": "sheets/002_detection.json"
+    },
+    {
+      "sheet_id": "003",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23.jpeg",
+      "raw_path": "data/sessions/205bcac1-d990-4870-8c1b-203b6f4c86e1/sheets/003_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-3",
+      "score": {
+        "total": 8
+      },
+      "error": null,
+      "sheet_confidence": null,
+      "detection_file": "sheets/003_detection.json"
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23(1).jpeg",
+      "raw_path": "data/sessions/205bcac1-d990-4870-8c1b-203b6f4c86e1/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    }
+  ]
+}

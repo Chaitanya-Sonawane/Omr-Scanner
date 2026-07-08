@@ -1,0 +1,99 @@
+{
+  "session_id": "ca738cac-9598-4261-8cae-8e95eac033d4",
+  "created_at": "2026-07-07T10:33:26.854592",
+  "answer_key": {
+    "q1": "A",
+    "q2": "B",
+    "q3": "C",
+    "q4": "D",
+    "q5": "A",
+    "q6": "B",
+    "q7": "C",
+    "q8": "D",
+    "q9": "A",
+    "q10": "B",
+    "q11": "C",
+    "q12": "D",
+    "q13": "A",
+    "q14": "B",
+    "q15": "C",
+    "q16": "D",
+    "q17": "A",
+    "q18": "B",
+    "q19": "C",
+    "q20": "D",
+    "q21": "A",
+    "q22": "B",
+    "q23": "C",
+    "q24": "D",
+    "q25": "A",
+    "q26": "B",
+    "q27": "C",
+    "q28": "D",
+    "q29": "A",
+    "q30": "B",
+    "q31": "C",
+    "q32": "D",
+    "q33": "A",
+    "q34": "B",
+    "q35": "C",
+    "q36": "D",
+    "q37": "A",
+    "q38": "B",
+    "q39": "C",
+    "q40": "D"
+  },
+  "sheets": [
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.24.jpeg",
+      "raw_path": "data/sessions/ca738cac-9598-4261-8cae-8e95eac033d4/sheets/001_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-1",
+      "score": {
+        "intelligence": 3,
+        "science": 3,
+        "social": 2,
+        "math": 3,
+        "total": 11
+      },
+      "error": null,
+      "sheet_confidence": 0.6098,
+      "detection_file": "sheets/001_detection.json"
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23(1).jpeg",
+      "raw_path": "data/sessions/ca738cac-9598-4261-8cae-8e95eac033d4/sheets/002_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-2",
+      "score": {
+        "intelligence": 3,
+        "science": 0,
+        "social": 1,
+        "math": 2,
+        "total": 6
+      },
+      "error": null,
+      "sheet_confidence": 0.2193,
+      "detection_file": "sheets/002_detection.json"
+    },
+    {
+      "sheet_id": "003",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23.jpeg",
+      "raw_path": "data/sessions/ca738cac-9598-4261-8cae-8e95eac033d4/sheets/003_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-3",
+      "score": {
+        "intelligence": 1,
+        "science": 0,
+        "social": 2,
+        "math": 2,
+        "total": 5
+      },
+      "error": null,
+      "sheet_confidence": 0.2994,
+      "detection_file": "sheets/003_detection.json"
+    }
+  ]
+}

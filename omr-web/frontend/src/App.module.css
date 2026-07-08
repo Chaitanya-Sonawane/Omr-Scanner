@@ -1,0 +1,83 @@
+.page { min-height: 100vh; display: flex; flex-direction: column; }
+
+.header {
+  background: var(--blue);
+  color: #fff;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(99,102,241,0.3);
+}
+
+.logo { display: flex; align-items: center; gap: 10px; }
+.logoIcon { font-size: 22px; }
+.title { font-size: 18px; font-weight: 700; letter-spacing: 0.3px; }
+
+.sessionTag {
+  font-size: 11px;
+  color: rgba(255,255,255,0.6);
+  font-family: monospace;
+  background: rgba(255,255,255,0.12);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.main {
+  flex: 1;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.uploadRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.errorBanner {
+  background: var(--red-lt);
+  border-left: 4px solid var(--red);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #991b1b;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 700px) {
+  .uploadRow { grid-template-columns: 1fr; }
+  .main { padding: 14px 12px; gap: 14px; }
+  .header { padding: 12px 16px; }
+  .title { font-size: 16px; }
+}

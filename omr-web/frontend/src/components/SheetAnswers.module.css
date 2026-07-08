@@ -1,0 +1,86 @@
+.container {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--blue);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.score {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(255,255,255,0.2);
+  padding: 4px 12px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 5px;
+  padding: 12px;
+  background: var(--bg);
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 2px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  min-height: 54px;
+  gap: 1px;
+  background: var(--surface);
+}
+
+.correct { background: var(--green-lt); border-color: var(--green); }
+.wrong   { background: var(--red-lt);   border-color: var(--red); }
+.blank   { background: var(--bg);       border-color: var(--border); }
+.multi   { background: var(--amber-lt); border-color: var(--amber); }
+
+.qno { font-size: 9px; color: var(--muted); font-weight: 500; }
+
+.marked { font-size: 17px; font-weight: 700; color: var(--text); }
+.correct .marked { color: var(--green); }
+.wrong .marked   { color: var(--red); }
+.blank .marked   { color: #94a3b8; font-size: 13px; }
+
+.hint { font-size: 9px; color: var(--green); font-weight: 700; }
+.wrong .hint     { color: var(--green); }
+
+.loading { padding: 16px; color: var(--muted); text-align: center; font-size: 13px; }
+.error   { padding: 16px; color: var(--red); font-size: 13px; }
+
+@media (max-width: 600px) {
+  .grid { grid-template-columns: repeat(8, 1fr); gap: 4px; padding: 10px; }
+  .cell { min-height: 48px; border-radius: 6px; }
+  .marked { font-size: 15px; }
+}
+
+@media (max-width: 420px) {
+  .grid { grid-template-columns: repeat(5, 1fr); }
+  .cell { min-height: 52px; }
+}

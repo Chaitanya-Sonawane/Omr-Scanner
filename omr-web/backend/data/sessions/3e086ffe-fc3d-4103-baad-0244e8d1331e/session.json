@@ -1,0 +1,152 @@
+{
+  "session_id": "3e086ffe-fc3d-4103-baad-0244e8d1331e",
+  "created_at": "2026-07-07T15:21:45.066989",
+  "answer_key": {
+    "q1": "A",
+    "q2": "A",
+    "q3": "B",
+    "q4": "B",
+    "q5": "C",
+    "q6": "C",
+    "q7": "D",
+    "q8": "D",
+    "q9": "A",
+    "q10": "A",
+    "q11": "B",
+    "q12": "B",
+    "q13": "C",
+    "q14": "C",
+    "q15": "D",
+    "q16": "D",
+    "q17": "A",
+    "q18": "B",
+    "q19": "C",
+    "q20": "D",
+    "q21": "A",
+    "q22": "B",
+    "q23": "C",
+    "q24": "D",
+    "q25": "A",
+    "q26": "A",
+    "q27": "B",
+    "q28": "B",
+    "q29": "C",
+    "q30": "C",
+    "q31": "B",
+    "q32": "A",
+    "q33": "C",
+    "q34": "D",
+    "q35": "B",
+    "q36": "C",
+    "q37": "A",
+    "q38": "B",
+    "q39": "C",
+    "q40": "D"
+  },
+  "sheets": [
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/001_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-1",
+      "score": {
+        "intelligence": 0,
+        "science": 0,
+        "social": 0,
+        "math": 0,
+        "total": 0
+      },
+      "error": "Error: OpenCV(4.9.0) /io/opencv/modules/core/src/kmeans.cpp:243: error: (-2:Unspecified error) in function 'double cv::kmeans(cv::InputArray, int, cv::InputOutputArray, cv::TermCriteria, int, int, cv::OutputArray)'\n> There can't be more clusters than elements (expected: 'N >= K'), where\n>     'N' is 1\n> must be greater than or equal to\n>     'K' is 2\n",
+      "detection_file": "sheets/001_detection.json"
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23(1).jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/002_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-2",
+      "score": {
+        "intelligence": 0,
+        "science": 0,
+        "social": 0,
+        "math": 0,
+        "total": 0
+      },
+      "error": "Error: OpenCV(4.9.0) /io/opencv/modules/core/src/kmeans.cpp:243: error: (-2:Unspecified error) in function 'double cv::kmeans(cv::InputArray, int, cv::InputOutputArray, cv::TermCriteria, int, int, cv::OutputArray)'\n> There can't be more clusters than elements (expected: 'N >= K'), where\n>     'N' is 1\n> must be greater than or equal to\n>     'K' is 2\n",
+      "detection_file": "sheets/002_detection.json"
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.22.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/002_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.22.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/002_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.22.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/002_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.22.jpeg",
+      "raw_path": "data/sessions/3e086ffe-fc3d-4103-baad-0244e8d1331e/sheets/002_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    }
+  ]
+}

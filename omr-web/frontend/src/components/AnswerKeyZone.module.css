@@ -1,0 +1,160 @@
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+
+.topRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.heading { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+.sub { font-size: 12px; color: var(--muted); }
+
+.tabs { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.tab {
+  padding: 7px 14px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  border: none;
+  border-radius: 0;
+}
+.tab:hover { background: var(--bg); color: var(--text); }
+.tabActive {
+  padding: 7px 14px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 13px;
+  border: none;
+  border-radius: 0;
+}
+
+.topActions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Key grid */
+.keyGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.section {}
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.table th, .table td {
+  border: 1px solid var(--border);
+  padding: 3px 4px;
+  text-align: center;
+}
+.table th { background: var(--blue); color: #fff; font-size: 10px; }
+.table tr:nth-child(even) td { background: var(--bg); }
+.ans { font-weight: 700; color: var(--green); }
+.qNum { font-size: 10px; color: var(--muted); font-weight: 600; }
+
+/* Option buttons */
+.optCell { padding: 2px !important; border: none !important; }
+.optBtn {
+  width: 26px; height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.optBtn:hover { background: var(--border); }
+.optSelected {
+  width: 26px; height: 22px;
+  border: 1.5px solid var(--green);
+  border-radius: 4px;
+  background: var(--green);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Footer */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.progress { font-size: 12px; color: var(--muted); flex: 1; min-width: 80px; }
+.saved { color: var(--green); font-size: 12px; font-weight: 600; }
+.error { color: var(--red); font-size: 12px; }
+
+/* Dropzone */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 28px 16px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+  transition: all 0.2s;
+}
+.dropzone:hover { border-color: var(--blue); background: var(--blue-lt); }
+.active { border-color: var(--green) !important; background: var(--green-lt) !important; }
+.disabled { opacity: 0.5; cursor: not-allowed; }
+.hint { font-size: 11px; color: #94a3b8; }
+
+/* Scan extras */
+.scanNote {
+  font-size: 12px;
+  color: var(--amber);
+  background: var(--amber-lt);
+  border-left: 3px solid var(--amber);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  border-radius: 0 6px 6px 0;
+}
+.warn { color: var(--amber); }
+.warningBox {
+  background: var(--amber-lt);
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #92400e;
+  margin-top: 8px;
+  line-height: 1.6;
+}
+.lowConfRow td { background: var(--amber-lt) !important; color: #92400e; }
+
+/* Mobile */
+@media (max-width: 700px) {
+  .keyGrid { grid-template-columns: repeat(2, 1fr); }
+  .topRow { flex-direction: column; }
+  .topActions { width: 100%; justify-content: space-between; }
+}
+
+@media (max-width: 380px) {
+  .keyGrid { grid-template-columns: repeat(2, 1fr); }
+  .optBtn, .optSelected { width: 24px; height: 20px; font-size: 9px; }
+}

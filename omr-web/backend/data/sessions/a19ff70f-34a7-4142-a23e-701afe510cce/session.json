@@ -1,0 +1,200 @@
+{
+  "session_id": "a19ff70f-34a7-4142-a23e-701afe510cce",
+  "created_at": "2026-07-08T04:12:08.775292",
+  "answer_key": {
+    "q1": "A",
+    "q2": "B",
+    "q3": "C",
+    "q4": "D",
+    "q5": "B",
+    "q6": "C",
+    "q7": "A",
+    "q8": "B",
+    "q9": "D",
+    "q10": "B",
+    "q11": "A",
+    "q12": "A",
+    "q13": "B",
+    "q14": "D",
+    "q15": "C",
+    "q16": "B",
+    "q17": "B",
+    "q18": "A",
+    "q19": "C",
+    "q20": "B",
+    "q21": "A",
+    "q22": "B",
+    "q23": "B",
+    "q24": "C",
+    "q25": "D",
+    "q26": "B",
+    "q27": "A",
+    "q28": "B",
+    "q29": "D",
+    "q30": "C",
+    "q31": "A",
+    "q32": "B",
+    "q33": "C",
+    "q34": "B",
+    "q35": "A",
+    "q36": "D",
+    "q37": "D",
+    "q38": "B",
+    "q39": "D",
+    "q40": "A"
+  },
+  "sheets": [
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23(1).jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/001_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-1",
+      "score": {
+        "intelligence": 2,
+        "science": 3,
+        "social": 4,
+        "math": 4,
+        "total": 13
+      },
+      "error": null,
+      "detection_file": "sheets/001_detection.json"
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/002_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-2",
+      "score": {
+        "intelligence": 4,
+        "science": 3,
+        "social": 3,
+        "math": 0,
+        "total": 10
+      },
+      "error": null,
+      "detection_file": "sheets/002_detection.json"
+    },
+    {
+      "sheet_id": "003",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.22.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/003_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-3",
+      "score": {
+        "intelligence": 2,
+        "science": 1,
+        "social": 4,
+        "math": 4,
+        "total": 11
+      },
+      "error": null,
+      "detection_file": "sheets/003_detection.json"
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.22.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/002_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "003",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.24.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/003_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "004",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23(1).jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/004_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-4",
+      "score": {
+        "intelligence": 3,
+        "science": 3,
+        "social": 2,
+        "math": 2,
+        "total": 10
+      },
+      "error": null,
+      "detection_file": "sheets/004_detection.json"
+    },
+    {
+      "sheet_id": "005",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/005_raw.jpeg",
+      "status": "DONE",
+      "student_id": "Sheet-5",
+      "score": {
+        "intelligence": 1,
+        "science": 3,
+        "social": 0,
+        "math": 0,
+        "total": 4
+      },
+      "error": null,
+      "detection_file": "sheets/005_detection.json"
+    },
+    {
+      "sheet_id": "001",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.23.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/001_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "002",
+      "filename": "WhatsApp Image 2026-07-07 at 20.20.22.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/002_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "003",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.24.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/003_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "004",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23(1).jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/004_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    },
+    {
+      "sheet_id": "005",
+      "filename": "WhatsApp Image 2026-07-06 at 16.07.23.jpeg",
+      "raw_path": "data/sessions/a19ff70f-34a7-4142-a23e-701afe510cce/sheets/005_raw.jpeg",
+      "status": "QUEUED",
+      "student_id": null,
+      "score": null,
+      "error": null
+    }
+  ]
+}

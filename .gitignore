@@ -1,0 +1,41 @@
+# Any directory starting with a dot
+**/\.*/
+# Except .github
+!.github/
+
+# Everything in inputs/ and outputs/
+inputs/*
+outputs/*
+
+# Misc
+**/.DS_Store
+**/__pycache__
+venv/
+.venv/
+OMRChecker.wiki/
+
+# Node
+node_modules/
+dist/
+.cache/
+
+# Python env & build
+*.pyc
+*.pyo
+*.egg-info/
+__pycache__/
+
+# Logs
+*.log
+backend.log
+frontend.log
+
+# Session/result data (generated at runtime)
+data/sessions/
+data/all_results.json
+data/answer_key.json
+data/summary_report.pdf
+
+# Debug images
+debug_*.jpg
+debug_*.png

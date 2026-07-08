@@ -1,0 +1,131 @@
+"""
+Image enhancement pipeline for OMR sheets.
+
+Tries Real-ESRGAN (deep learning upscale) first; falls back to
+OpenCV-based preprocessing when torch / model weights are unavailable.
+
+Usage:
+    from omr.enhancer import enhance_image
+    enhanced_path = enhance_image(raw_path, out_path)
+"""
+
+import os
+import cv2
+import numpy as np
+
+# Path to the Real-ESRGAN repo and weights bundled with this project
+_REALESRGAN_DIR = os.path.join(
+    os.path.dirname(__file__),           # omr-web/backend/omr/
+    "..", "..", "..",                    # project root
+    "Real-ESRGAN-master",
+)
+_REALESRGAN_DIR = os.path.normpath(_REALESRGAN_DIR)
+_WEIGHTS_PATH = os.path.join(_REALESRGAN_DIR, "weights", "RealESRGAN_x4plus.pth")
+
+
+_WEIGHTS_URL = (
+    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+)
+
+
+def _realesrgan_available() -> bool:
+    """Return True only when both the package and weights are present."""
+    try:
+        import torch  # noqa: F401
+        from basicsr.archs.rrdbnet_arch import RRDBNet  # noqa: F401
+        from realesrgan import RealESRGANer  # noqa: F401
+    except ImportError:
+        return False
+    if not os.path.isfile(_WEIGHTS_PATH):
+        # Auto-download weights on first use
+        try:
+            print(f"[enhancer] Downloading Real-ESRGAN weights (~67 MB)…")
+            import urllib.request
+            os.makedirs(os.path.dirname(_WEIGHTS_PATH), exist_ok=True)
+            urllib.request.urlretrieve(_WEIGHTS_URL, _WEIGHTS_PATH)
+            print(f"[enhancer] Weights saved to {_WEIGHTS_PATH}")
+        except Exception as e:
+            print(f"[enhancer] Weight download failed: {e}")
+            return False
+    return True
+
+
+def _enhance_realesrgan(img_bgr: np.ndarray) -> np.ndarray:
+    """Run Real-ESRGAN x4 upscale then downscale back to original size."""
+    import torch
+    from basicsr.archs.rrdbnet_arch import RRDBNet
+    from realesrgan import RealESRGANer
+
+    model = RRDBNet(
+        num_in_ch=3, num_out_ch=3,
+        num_feat=64, num_block=23, num_grow_ch=32, scale=4
+    )
+    upsampler = RealESRGANer(
+        scale=4,
+        model_path=_WEIGHTS_PATH,
+        model=model,
+        tile=256,          # tile to limit VRAM usage
+        tile_pad=10,
+        pre_pad=0,
+        half=not torch.cuda.is_available(),   # fp16 on GPU, fp32 on CPU
+        gpu_id=0 if torch.cuda.is_available() else None,
+    )
+    enhanced, _ = upsampler.enhance(img_bgr, outscale=1)  # keep original size
+    return enhanced
+
+
+def _enhance_opencv(img_bgr: np.ndarray) -> np.ndarray:
+    """
+    Lightweight OpenCV enhancement for OMR sheets:
+      1. CLAHE on the L channel (contrast normalisation)
+      2. Mild sharpening (unsharp mask)
+      3. Gentle denoising
+
+    This reliably improves WhatsApp-compressed / low-light photos enough
+    for Hough circle detection to find more bubbles.
+    """
+    # -- 1. CLAHE contrast enhancement --
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l_eq = clahe.apply(l)
+    lab_eq = cv2.merge([l_eq, a, b])
+    enhanced = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+
+    # -- 2. Unsharp mask sharpening --
+    blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=3)
+    enhanced = cv2.addWeighted(enhanced, 1.5, blur, -0.5, 0)
+
+    # -- 3. Fast non-local means denoising --
+    enhanced = cv2.fastNlMeansDenoisingColored(enhanced, None, h=5, hColor=5,
+                                               templateWindowSize=7,
+                                               searchWindowSize=21)
+    return enhanced
+
+
+def enhance_image(input_path: str, output_path: str) -> str:
+    """
+    Enhance an OMR sheet image and save to output_path.
+
+    Returns output_path so it can be used inline:
+        scan_path = enhance_image(raw_path, enhanced_path)
+    """
+    img = cv2.imread(input_path)
+    if img is None:
+        raise RuntimeError(f"Cannot read image for enhancement: {input_path}")
+
+    if _realesrgan_available():
+        try:
+            enhanced = _enhance_realesrgan(img)
+            mode = "Real-ESRGAN"
+        except Exception as e:
+            print(f"[enhancer] Real-ESRGAN failed ({e}), falling back to OpenCV")
+            enhanced = _enhance_opencv(img)
+            mode = "OpenCV-fallback"
+    else:
+        enhanced = _enhance_opencv(img)
+        mode = "OpenCV"
+
+    cv2.imwrite(output_path, enhanced)
+    print(f"[enhancer] {os.path.basename(input_path)} enhanced via {mode} -> {output_path}")
+    return output_path
