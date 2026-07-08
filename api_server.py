@@ -65,7 +65,10 @@ sessions = {}
 results_store = {}
 
 # Persistent answer key storage
-_SAVED_KEY_FILE = os.path.join(os.path.dirname(__file__), "saved_answer_key.json")
+# Use /tmp on Render (ephemeral but writable); fall back to local dir in dev
+_DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
+os.makedirs(_DATA_DIR, exist_ok=True)
+_SAVED_KEY_FILE = os.path.join(_DATA_DIR, "saved_answer_key.json")
 _saved_answer_key: dict = {"answers": {}}
 
 # Load saved key from disk on startup
@@ -133,6 +136,10 @@ class SessionData:
 @app.get("/")
 async def root():
     return {"message": "OMR Scanner API", "version": "1.0", "status": "running"}
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 @app.post("/api/session")

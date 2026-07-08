@@ -3,11 +3,12 @@ services:
     name: omr-scanner-api
     runtime: python
     rootDir: .
-    buildCommand: pip install -r requirements.api.txt
+    buildCommand: pip install -r requirements.txt && mkdir -p data/sessions
     startCommand: uvicorn api_server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
-      - key: ALLOWED_ORIGINS
-        value: https://omrsheetscanner.netlify.app
       - key: PYTHON_VERSION
         value: "3.11.9"
+      - key: ALLOWED_ORIGINS
+        value: https://omrsheetscanner.netlify.app
     autoDeploy: true
