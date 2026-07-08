@@ -17,6 +17,12 @@
 .logoIcon { font-size: 22px; }
 .title { font-size: 18px; font-weight: 700; letter-spacing: 0.3px; }
 
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .sessionTag {
   font-size: 11px;
   color: rgba(255,255,255,0.6);
@@ -25,6 +31,20 @@
   padding: 3px 8px;
   border-radius: 6px;
 }
+
+.newSessionBtn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue, #6366f1);
+  background: #fff;
+  border: none;
+  border-radius: 7px;
+  padding: 5px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.newSessionBtn:hover { opacity: 0.85; }
 
 .main {
   flex: 1;
