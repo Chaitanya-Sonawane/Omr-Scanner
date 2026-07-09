@@ -8,7 +8,7 @@ def create_visual_debug():
     img_path = "data/sessions/336665d9-8d69-4863-9b62-4f0312f83061/sheets/001_raw.jpeg"
     
     # Run the scanner with debug output
-    answers, flags, raw = detect_bubbles(img_path, "scanner_debug.jpg")
+    answers, flags, raw, _conf = detect_bubbles(img_path, "scanner_debug.jpg")
     
     # Load the original image
     img = cv2.imread(img_path)

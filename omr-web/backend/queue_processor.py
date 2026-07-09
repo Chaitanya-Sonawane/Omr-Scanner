@@ -67,7 +67,7 @@ def _process_sheet(session_id: str, sheet_meta: Dict[str, Any], index: int):
             scan_path = raw_path
 
         # 2. Scan the OMR sheet
-        answers_raw, flags, _ = detect_bubbles(scan_path)
+        answers_raw, flags, _, _conf = detect_bubbles(scan_path)
         # 3. Convert to letters
         answers = {q: OPTION_MAP.get(opt, "") if opt is not None else ""
                    for q, opt in answers_raw.items()}

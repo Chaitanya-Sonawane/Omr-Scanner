@@ -8,7 +8,7 @@ img_path = "data/sessions/336665d9-8d69-4863-9b62-4f0312f83061/sheets/001_raw.jp
 debug_out = "debug_visual_test.jpg"
 
 print("Testing visual detection...")
-answers, flags, raw = detect_bubbles(img_path, debug_out)
+answers, flags, raw, _conf = detect_bubbles(img_path, debug_out)
 
 print("Generated debug image: debug_visual_test.jpg")
 print("Manual verification needed:")

@@ -73,7 +73,7 @@ async def upload_answer_key(session_id: str, file: UploadFile = File(...)):
     await _save_upload(file, dest)
 
     try:
-        answers_raw, flags, _ = detect_bubbles(str(dest))
+        answers_raw, flags, _, _conf = detect_bubbles(str(dest))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Answer key scan failed: {e}")
 
@@ -398,7 +398,7 @@ async def debug_grid_check(session_id: str):
 
     try:
         # Use the updated OMR scanner for debug analysis
-        answers, flags, raw_results = detect_bubbles(img_path)
+        answers, flags, raw_results, _conf = detect_bubbles(img_path)
         
         # Convert to format expected by frontend
         debug_questions = []
