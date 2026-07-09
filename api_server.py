@@ -116,31 +116,11 @@ def _persist_answer_key(answers: dict):
 
 def process_omr_image(image_path: str) -> tuple:
     """
-    Preprocess (resize to 800×1040, CLAHE) then scan with OMR scanner.
-    Preprocessing dramatically reduces CPU time on large phone-camera photos.
+    Scan image directly with OMR scanner — no preprocessing.
+    Preprocessing (resize/warp) distorts column positions and causes wrong option detection.
     Returns (answers, flags, raw_data)
     """
-    # Try to use the preprocessor from the backend package
-    try:
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'omr-web', 'backend'))
-        from omr.preprocessor import preprocess
-        import cv2 as _cv2
-        processed = preprocess(image_path)   # float32 grayscale 800×1040
-        # Write processed image to a temp file so detect_bubbles can read it
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-            tmp_path = tmp.name
-        _cv2.imwrite(tmp_path, processed.astype('uint8'))
-        try:
-            answers, flags, raw, _conf = omr_scanner.detect_bubbles(tmp_path)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-    except Exception:
-        # Fallback: run scanner directly on the original image
-        answers, flags, raw, _conf = omr_scanner.detect_bubbles(image_path)
+    answers, flags, raw, _conf = omr_scanner.detect_bubbles(image_path)
     return answers, flags, raw
 
 
@@ -323,7 +303,7 @@ async def process_sheets(session_id: str):
             
             try:
                 # Process the sheet with enhancement
-                answers, flags, raw = process_omr_image(sheet["path"])
+                answers, flags, raw = process_omr_image(sheet["path"])  # process_omr_image returns 3 values
                 
                 if answers is None:
                     sheet["status"] = "ERROR"

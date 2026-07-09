@@ -138,21 +138,17 @@ def _apply_clahe(img: np.ndarray) -> np.ndarray:
 
 def preprocess(path: str) -> np.ndarray:
     """
-    Full pipeline: load → find page → perspective warp → resize → CLAHE → normalize.
+    Full pipeline: load → resize → CLAHE → normalize.
+    Perspective warp is intentionally skipped — it can mis-order corners
+    and swap left/right columns, causing wrong option detection.
     Returns float32 grayscale image [0,255] at TARGET_W x TARGET_H.
-    Never raises for missing page — falls back to simple resize.
     """
     img = load_image(path)
     
     if img is None or img.size == 0:
         raise ProcessingError(f"Failed to load image from {path}")
 
-    # Try perspective warp — skip silently if not found (phone photos often lack clean border)
-    page_pts = find_page(img)
-    if page_pts is not None:
-        img = _four_point_transform(img, page_pts)
-
-    # Resize to fixed processing dimensions
+    # Resize to fixed processing dimensions (NO perspective warp)
     img = cv2.resize(img, (TARGET_W, TARGET_H), interpolation=cv2.INTER_AREA)
     
     if img is None or img.size == 0:
