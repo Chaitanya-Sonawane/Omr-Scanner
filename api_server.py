@@ -132,7 +132,7 @@ def process_omr_image(image_path: str) -> tuple:
             tmp_path = tmp.name
         _cv2.imwrite(tmp_path, processed.astype('uint8'))
         try:
-            answers, flags, raw = omr_scanner.detect_bubbles(tmp_path)
+            answers, flags, raw, _conf = omr_scanner.detect_bubbles(tmp_path)
         finally:
             try:
                 os.unlink(tmp_path)
@@ -140,7 +140,7 @@ def process_omr_image(image_path: str) -> tuple:
                 pass
     except Exception:
         # Fallback: run scanner directly on the original image
-        answers, flags, raw = omr_scanner.detect_bubbles(image_path)
+        answers, flags, raw, _conf = omr_scanner.detect_bubbles(image_path)
     return answers, flags, raw
 
 
