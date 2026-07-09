@@ -1,163 +1,141 @@
 """
-Image enhancement pipeline for OMR sheets.
+Image preprocessing pipeline for OMR sheets.
 
-Tries Real-ESRGAN (deep learning upscale) first; falls back to
-OpenCV-based preprocessing when torch / model weights are unavailable.
+Provides a robust OpenCV-based pipeline that normalises contrast,
+removes shadows, deskews the sheet, and sharpens edges — no heavy
+ML dependencies required.
 
 Usage:
-    from omr.enhancer import enhance_image
-    enhanced_path = enhance_image(raw_path, out_path)
+    from enhancer import enhance_image, preprocess_for_omr
+
+    # Save enhanced colour image to disk
+    out_path = enhance_image("raw.jpg", "enhanced.jpg")
+
+    # Get preprocessed grayscale ndarray ready for circle detection
+    gray = preprocess_for_omr("raw.jpg")
 """
 
-import os
-import sys
-import types
 import cv2
 import numpy as np
 
 
-def _patch_torchvision_functional_tensor():
-    """
-    basicsr (a Real-ESRGAN dependency) does:
-        from torchvision.transforms.functional_tensor import rgb_to_grayscale
-    That module was removed in torchvision>=0.17 (moved into
-    torchvision.transforms.functional). Newer torchvision (installed: 0.27.1,
-    paired with torch 2.12.1) breaks the basicsr import with an ImportError,
-    which makes Real-ESRGAN look "unavailable" even though it's installed.
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-    Fix: synthesize a shim module named torchvision.transforms.functional_tensor
-    that re-exports rgb_to_grayscale from its current location, and register it
-    in sys.modules *before* basicsr is imported anywhere.
-    """
-    if "torchvision.transforms.functional_tensor" in sys.modules:
-        return  # already patched
-    try:
-        import torchvision.transforms.functional as F
-    except ImportError:
-        return  # torchvision itself isn't installed; nothing to patch
-
-    shim = types.ModuleType("torchvision.transforms.functional_tensor")
-    shim.rgb_to_grayscale = F.rgb_to_grayscale
-    sys.modules["torchvision.transforms.functional_tensor"] = shim
+def _remove_shadow(gray: np.ndarray) -> np.ndarray:
+    """Subtract morphological background to neutralise shadows and uneven lighting."""
+    k = max(15, min(gray.shape[:2]) // 20 | 1)  # always odd, scales with image size
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    background = cv2.morphologyEx(gray, cv2.MORPH_DILATE, kernel)
+    diff = cv2.absdiff(background, gray)
+    return cv2.normalize(diff, None, 0, 255, cv2.NORM_MINMAX)
 
 
-# Apply the patch as soon as this module loads, before any basicsr/realesrgan
-# import has a chance to run (here or anywhere else in the process).
-_patch_torchvision_functional_tensor()
-
-# Path to the Real-ESRGAN repo and weights bundled with this project
-_REALESRGAN_DIR = os.path.join(
-    os.path.dirname(__file__),           # omr-web/backend/omr/
-    "..", "..", "..",                    # project root
-    "Real-ESRGAN-master",
-)
-_REALESRGAN_DIR = os.path.normpath(_REALESRGAN_DIR)
-_WEIGHTS_PATH = os.path.join(_REALESRGAN_DIR, "weights", "RealESRGAN_x4plus.pth")
+def _clahe(gray: np.ndarray, clip: float = 2.5) -> np.ndarray:
+    return cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8)).apply(gray)
 
 
-_WEIGHTS_URL = (
-    "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
-)
+def _sharpen(gray: np.ndarray) -> np.ndarray:
+    """Unsharp-mask sharpening — enhances bubble edges without amplifying noise."""
+    blur = cv2.GaussianBlur(gray, (0, 0), sigmaX=2.0)
+    return cv2.addWeighted(gray, 1.4, blur, -0.4, 0)
 
 
-def _realesrgan_available() -> bool:
-    """Return True only when both the package and weights are present."""
-    try:
-        import torch  # noqa: F401
-        from basicsr.archs.rrdbnet_arch import RRDBNet  # noqa: F401
-        from realesrgan import RealESRGANer  # noqa: F401
-    except ImportError:
-        return False
-    if not os.path.isfile(_WEIGHTS_PATH):
-        # Auto-download weights on first use
-        try:
-            print(f"[enhancer] Downloading Real-ESRGAN weights (~67 MB)…")
-            import urllib.request
-            os.makedirs(os.path.dirname(_WEIGHTS_PATH), exist_ok=True)
-            urllib.request.urlretrieve(_WEIGHTS_URL, _WEIGHTS_PATH)
-            print(f"[enhancer] Weights saved to {_WEIGHTS_PATH}")
-        except Exception as e:
-            print(f"[enhancer] Weight download failed: {e}")
-            return False
-    return True
-
-
-def _enhance_realesrgan(img_bgr: np.ndarray) -> np.ndarray:
-    """Run Real-ESRGAN x4 upscale then downscale back to original size."""
-    import torch
-    from basicsr.archs.rrdbnet_arch import RRDBNet
-    from realesrgan import RealESRGANer
-
-    model = RRDBNet(
-        num_in_ch=3, num_out_ch=3,
-        num_feat=64, num_block=23, num_grow_ch=32, scale=4
+def _deskew(img: np.ndarray) -> np.ndarray:
+    """Correct small rotation angles (<=10 deg) from dominant Hough line angle."""
+    gray = img if img.ndim == 2 else cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 40, 120, apertureSize=3)
+    lines = cv2.HoughLinesP(
+        edges, 1, np.pi / 180,
+        threshold=80, minLineLength=max(50, img.shape[1] // 8), maxLineGap=20,
     )
-    upsampler = RealESRGANer(
-        scale=4,
-        model_path=_WEIGHTS_PATH,
-        model=model,
-        tile=256,          # tile to limit VRAM usage
-        tile_pad=10,
-        pre_pad=0,
-        half=not torch.cuda.is_available(),   # fp16 on GPU, fp32 on CPU
-        gpu_id=0 if torch.cuda.is_available() else None,
-    )
-    enhanced, _ = upsampler.enhance(img_bgr, outscale=1)  # keep original size
-    return enhanced
+    if lines is None or len(lines) < 5:
+        return img
+
+    angles = []
+    for line in lines[:80]:
+        x1, y1, x2, y2 = line[0]
+        if x2 != x1:
+            a = np.degrees(np.arctan2(y2 - y1, x2 - x1))
+            if abs(a) <= 10:
+                angles.append(a)
+
+    if not angles:
+        return img
+
+    skew = float(np.median(angles))
+    if abs(skew) < 0.3:
+        return img
+
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), skew, 1.0)
+    return cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC,
+                          borderMode=cv2.BORDER_REPLICATE)
 
 
 def _enhance_opencv(img_bgr: np.ndarray) -> np.ndarray:
     """
-    Lightweight OpenCV enhancement for OMR sheets:
-      1. CLAHE on the L channel (contrast normalisation)
-      2. Mild sharpening (unsharp mask)
-      3. Gentle denoising
-
-    This reliably improves WhatsApp-compressed / low-light photos enough
-    for Hough circle detection to find more bubbles.
+    Full colour enhancement pipeline for OMR sheets:
+      1. Deskew (correct small rotations)
+      2. Shadow removal via morphological background subtraction on L channel
+      3. CLAHE contrast normalisation
+      4. Unsharp-mask sharpening
+      5. Mild fast NLM denoising
     """
-    # -- 1. CLAHE contrast enhancement --
+    img_bgr = _deskew(img_bgr)
+
     lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l_eq = clahe.apply(l)
-    lab_eq = cv2.merge([l_eq, a, b])
-    enhanced = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+    l_ch, a_ch, b_ch = cv2.split(lab)
 
-    # -- 2. Unsharp mask sharpening --
-    blur = cv2.GaussianBlur(enhanced, (0, 0), sigmaX=3)
-    enhanced = cv2.addWeighted(enhanced, 1.5, blur, -0.5, 0)
+    l_no_shadow = _remove_shadow(l_ch)
+    l_eq = _clahe(l_no_shadow, clip=2.5)
 
-    # -- 3. Fast non-local means denoising --
-    enhanced = cv2.fastNlMeansDenoisingColored(enhanced, None, h=5, hColor=5,
-                                               templateWindowSize=7,
-                                               searchWindowSize=21)
-    return enhanced
+    enhanced = cv2.cvtColor(cv2.merge([l_eq, a_ch, b_ch]), cv2.COLOR_LAB2BGR)
+
+    # Per-channel sharpening preserves colour balance
+    sharpened = cv2.merge([_sharpen(c) for c in cv2.split(enhanced)])
+
+    # Light denoising — keep h small to avoid blurring bubble edges
+    return cv2.fastNlMeansDenoisingColored(
+        sharpened, None, h=4, hColor=4,
+        templateWindowSize=7, searchWindowSize=21,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def preprocess_for_omr(input_path: str) -> np.ndarray:
+    """
+    Load an image, enhance it, and return a preprocessed grayscale ndarray
+    ready for Hough circle detection.
+
+    Pipeline: _enhance_opencv -> grayscale -> CLAHE -> median blur
+
+    Returns:
+        np.ndarray: uint8 grayscale image
+    """
+    img = cv2.imread(input_path)
+    if img is None:
+        raise RuntimeError(f"Cannot read image: {input_path}")
+
+    enhanced = _enhance_opencv(img)
+    gray = cv2.cvtColor(enhanced, cv2.COLOR_BGR2GRAY)
+    gray = _clahe(gray, clip=3.0)
+    return cv2.medianBlur(gray, 3)
 
 
 def enhance_image(input_path: str, output_path: str) -> str:
     """
     Enhance an OMR sheet image and save to output_path.
 
-    Returns output_path so it can be used inline:
+    Returns output_path for convenience:
         scan_path = enhance_image(raw_path, enhanced_path)
     """
     img = cv2.imread(input_path)
     if img is None:
-        raise RuntimeError(f"Cannot read image for enhancement: {input_path}")
-
-    if _realesrgan_available():
-        try:
-            enhanced = _enhance_realesrgan(img)
-            mode = "Real-ESRGAN"
-        except Exception as e:
-            print(f"[enhancer] Real-ESRGAN failed ({e}), falling back to OpenCV")
-            enhanced = _enhance_opencv(img)
-            mode = "OpenCV-fallback"
-    else:
-        enhanced = _enhance_opencv(img)
-        mode = "OpenCV"
-
-    cv2.imwrite(output_path, enhanced)
-    print(f"[enhancer] {os.path.basename(input_path)} enhanced via {mode} -> {output_path}")
+        raise RuntimeError(f"Cannot read image: {input_path}")
+    cv2.imwrite(output_path, _enhance_opencv(img))
     return output_path

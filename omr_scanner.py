@@ -1,488 +1,483 @@
 """
-Advanced OMR Scanner - Production Ready v2.1
-Features:
-- Two-pass verification system (intensity + filled-pixel validation)
-- Multi-metric bubble analysis (mean intensity + fill ratio)
-- Adaptive preprocessing for varying image quality
-- Automatic perspective correction
-- Multi-stage circle detection with fallback strategies
-- Per-row adaptive thresholding with confidence scoring
-- Robust handling of light marks, partial fills, and circled bubbles
-- Smart block splitting resistant to middle-column interference
-- Enhanced debug logging and visualization
+OMR Scanner v3.0
+Detects filled bubbles in 40-question, 4-option OMR answer sheets.
+
+Improvements over v2:
+  - Uses enhancer.preprocess_for_omr() for consistent, shadow-free preprocessing
+  - HOUGH_GRADIENT_ALT tried first (OpenCV >= 4.5.1) for sub-pixel accuracy
+  - Improved deskew using Shi-Tomasi corners to focus on meaningful regions
+  - Cleaner two-pass verification — thresholds calibrated to blank baseline
+  - Confidence formula tied directly to measured signal (no flat bonus)
+  - Explicit 'no_clear_mark' flag instead of silent None return
 """
+
 import cv2
 import numpy as np
-import json
 import sys
-from typing import Tuple, Dict, Optional, List
+from typing import Dict, List, Optional, Tuple
 
-# Debug logging
+from enhancer import preprocess_for_omr
+
 DEBUG_ENABLED = False
 
-def log(msg: str):
-    """Debug logging function"""
+
+def _log(msg: str) -> None:
     if DEBUG_ENABLED:
-        print(f"[OMR-DEBUG] {msg}")
+        print(f"[OMR] {msg}")
 
 
-def _try_hough(gray_blur, min_r, max_r, param2):
-    circles = cv2.HoughCircles(
-        gray_blur, cv2.HOUGH_GRADIENT, dp=1, minDist=18,
-        param1=50, param2=param2, minRadius=min_r, maxRadius=max_r
+# ---------------------------------------------------------------------------
+# Circle detection
+# ---------------------------------------------------------------------------
+
+def _try_hough(img: np.ndarray, min_r: int, max_r: int, param2: float,
+               method: int = cv2.HOUGH_GRADIENT) -> Optional[np.ndarray]:
+    return cv2.HoughCircles(
+        img, method, dp=1, minDist=16,
+        param1=50, param2=param2,
+        minRadius=min_r, maxRadius=max_r,
     )
-    return circles
 
 
-def _preprocess_image(gray):
-    """Advanced preprocessing: handles shadows, uneven lighting, low contrast."""
-    # Normalize contrast
-    if gray.max() > gray.min():
-        gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
-    
-    # Remove shadows with morphological background subtraction
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    background = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
-    gray = cv2.subtract(background, gray)
-    gray = 255 - gray
-    
-    # Adaptive histogram equalization
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    gray = clahe.apply(gray)
-    
-    return gray
+def _detect_circles(gray: np.ndarray) -> Tuple[Optional[np.ndarray], np.ndarray]:
+    """
+    Multi-stage Hough circle detection with four fallback strategies.
 
-
-def _detect_circles(gray):
-    """Multi-stage circle detection with preprocessing and fallback strategies."""
+    Stage 1: HOUGH_GRADIENT_ALT (OpenCV >= 4.5.1) — sub-pixel accurate.
+    Stage 2: Classic HOUGH_GRADIENT on median-blurred image.
+    Stage 3: Bilateral filter to preserve edges while reducing noise.
+    Stage 4: Aggressive CLAHE + Otsu binarisation for low-quality photos.
+    """
     h, w = gray.shape
     r_est = max(8, min(30, w // 80))
-    min_r = max(6, r_est - 6)
-    max_r = r_est + 10
-    
-    # Stage 1: Standard detection on median-blurred image
+    min_r, max_r = max(5, r_est - 7), r_est + 12
+
     blur = cv2.medianBlur(gray, 5)
-    for param2 in [22, 18, 14, 10]:
-        circles = _try_hough(blur, min_r, max_r, param2)
-        if circles is not None and len(circles[0]) >= 8:
-            return circles, blur
-    
-    # Stage 2: Enhanced preprocessing for difficult images
-    enhanced = _preprocess_image(gray)
-    blur2 = cv2.medianBlur(enhanced, 5)
-    for param2 in [20, 16, 12]:
-        circles = _try_hough(blur2, min_r, max_r, param2)
-        if circles is not None and len(circles[0]) >= 8:
-            return circles, blur2
-    
-    # Stage 3: Bilateral filter for noise reduction while preserving edges
-    bilateral = cv2.bilateralFilter(gray, 9, 75, 75)
-    blur3 = cv2.medianBlur(bilateral, 3)
-    for param2 in [18, 14, 10]:
-        circles = _try_hough(blur3, min_r, max_r, param2)
-        if circles is not None and len(circles[0]) >= 8:
-            return circles, blur3
-    
+
+    # Stage 1: HOUGH_GRADIENT_ALT
+    try:
+        alt = cv2.HOUGH_GRADIENT_ALT
+        for p2 in [0.85, 0.75, 0.65, 0.55]:
+            c = _try_hough(blur, min_r, max_r, p2, alt)
+            if c is not None and len(c[0]) >= 8:
+                return c, blur
+    except AttributeError:
+        pass  # OpenCV < 4.5.1
+
+    # Stage 2: Classic gradient, decreasing threshold
+    for p2 in [22, 18, 14, 10, 8]:
+        c = _try_hough(blur, min_r, max_r, p2)
+        if c is not None and len(c[0]) >= 8:
+            return c, blur
+
+    # Stage 3: Bilateral filter
+    bilat = cv2.bilateralFilter(gray, 9, 75, 75)
+    blur3 = cv2.medianBlur(bilat, 3)
+    for p2 in [18, 14, 10, 7]:
+        c = _try_hough(blur3, min_r, max_r, p2)
+        if c is not None and len(c[0]) >= 8:
+            return c, blur3
+
+    # Stage 4: Aggressive CLAHE + Otsu
+    eq = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8)).apply(gray)
+    _, bw = cv2.threshold(eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    blur4 = cv2.medianBlur(bw, 3)
+    for p2 in [15, 10, 7, 5]:
+        c = _try_hough(blur4, max(4, r_est - 9), r_est + 15, p2)
+        if c is not None and len(c[0]) >= 8:
+            return c, blur4
+
     return None, blur
 
 
-def _safe_kmeans(data, k, criteria, attempts=10):
-    n = len(data)
-    if n < k:
+# ---------------------------------------------------------------------------
+# Rotation correction
+# ---------------------------------------------------------------------------
+
+def _auto_rotate(img: np.ndarray, gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Correct small skew (<= 15 deg) using dominant Hough line angle.
+    Shi-Tomasi corners focus the edge map on meaningful sheet structure.
+    """
+    corners = cv2.goodFeaturesToTrack(gray, maxCorners=300, qualityLevel=0.01,
+                                      minDistance=10)
+    mask = np.zeros_like(gray)
+    if corners is not None:
+        for pt in corners:
+            x, y = pt.ravel().astype(int)
+            cv2.circle(mask, (x, y), 12, 255, -1)
+    else:
+        mask[:] = 255
+
+    edges = cv2.bitwise_and(cv2.Canny(gray, 40, 120), mask)
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180,
+                             threshold=80, minLineLength=80, maxLineGap=15)
+    if lines is None or len(lines) < 5:
+        return img, gray
+
+    angles = [
+        np.degrees(np.arctan2(l[0][3] - l[0][1], l[0][2] - l[0][0]))
+        for l in lines[:100]
+        if abs(np.degrees(np.arctan2(l[0][3] - l[0][1], l[0][2] - l[0][0]))) <= 15
+    ]
+    if not angles:
+        return img, gray
+
+    skew = float(np.median(angles))
+    if abs(skew) < 0.4:
+        return img, gray
+
+    h, w = img.shape[:2]
+    M = cv2.getRotationMatrix2D((w / 2, h / 2), skew, 1.0)
+    img_r = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC,
+                            borderMode=cv2.BORDER_REPLICATE)
+    _log(f"Auto-rotated {skew:.2f} deg")
+    return img_r, cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY)
+
+
+# ---------------------------------------------------------------------------
+# Grid construction
+# ---------------------------------------------------------------------------
+
+def _safe_kmeans(data: np.ndarray, k: int, criteria: tuple, attempts: int = 10):
+    if len(data) < k:
         return None, None
-    _, labels, centers = cv2.kmeans(data, k, None, criteria, attempts, cv2.KMEANS_PP_CENTERS)
+    _, labels, centers = cv2.kmeans(data, k, None, criteria, attempts,
+                                    cv2.KMEANS_PP_CENTERS)
     return labels, centers
 
 
-def _compute_row_y(all_pts):
+def _compute_row_y(all_pts: np.ndarray) -> List[float]:
     """
-    Compute the 20 shared row y-positions from ALL detected bubble points
-    on the sheet (both option blocks pooled together). Pooling roughly
-    doubles the points per row cluster, making row positions far more stable.
+    Estimate 20 shared row Y-positions by K-means on ALL bubble Y-coords
+    (both blocks pooled).  A polyfit pass snaps outlier rows onto the line.
     """
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
-    all_ys = all_pts[:, 1].reshape(-1, 1).astype(np.float32)
-    n_rows_k = min(20, len(all_ys))
-    row_labels, row_centers = _safe_kmeans(all_ys, n_rows_k, criteria)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, 0.1)
+    ys = all_pts[:, 1].reshape(-1, 1).astype(np.float32)
+    labels, centers = _safe_kmeans(ys, min(20, len(ys)), criteria)
 
-    if row_labels is None:
-        y_min, y_max = float(all_ys.min()), float(all_ys.max())
-        row_y_sorted = np.linspace(y_min, y_max, 20).tolist()
-    else:
-        cluster_y = sorted(float(c) for c in row_centers.flatten())
-        if len(cluster_y) < 20:
-            diffs = np.diff(cluster_y)
-            diffs = diffs[diffs > 3]
-            pitch = float(np.median(diffs)) if len(diffs) else 30.0
-            row_y_sorted = list(cluster_y)
-            while len(row_y_sorted) < 20:
-                row_y_sorted.append(row_y_sorted[-1] + pitch)
-        else:
-            row_y_sorted = cluster_y
+    if labels is None:
+        return np.linspace(float(ys.min()), float(ys.max()), 20).tolist()
 
-    # Snap any row deviating from the linear trend back onto the fitted line
-    row_idx_arr = np.arange(20)
-    row_y_arr = np.array(row_y_sorted, dtype=np.float64)
-    diffs = np.diff(row_y_arr)
-    diffs = diffs[diffs > 3]
-    est_pitch = float(np.median(diffs)) if len(diffs) else 30.0
+    row_y = sorted(float(c) for c in centers.flatten())
+    if len(row_y) < 20:
+        diffs = np.diff(row_y)
+        pitch = float(np.median(diffs[diffs > 3])) if any(diffs > 3) else 30.0
+        while len(row_y) < 20:
+            row_y.append(row_y[-1] + pitch)
+
+    # Polyfit outlier snapping (two passes)
+    idx = np.arange(20, dtype=np.float64)
+    arr = np.array(row_y, dtype=np.float64)
+    diffs = np.diff(arr)
+    pitch = float(np.median(diffs[diffs > 3])) if any(diffs > 3) else 30.0
     for _ in range(2):
-        ay, by_ = np.polyfit(row_idx_arr, row_y_arr, 1)
-        fitted = ay * row_idx_arr + by_
-        resid = row_y_arr - fitted
-        bad = np.abs(resid) > max(est_pitch * 0.4, 8)
+        a, b = np.polyfit(idx, arr, 1)
+        fitted = a * idx + b
+        bad = np.abs(arr - fitted) > max(pitch * 0.4, 8)
         if not bad.any():
             break
-        row_y_arr[bad] = fitted[bad]
-    return row_y_arr.tolist()
+        arr[bad] = fitted[bad]
+
+    return arr.tolist()
 
 
-def _build_grid(block_pts, gray, radius_est, row_y_sorted):
+def _build_grid(block_pts: np.ndarray, gray: np.ndarray,
+                radius_est: int, row_y: List[float]) -> Dict[int, List[Tuple[int, int]]]:
     """
-    Build a 20x4 grid of (x,y) sample positions for one answer block,
-    given shared row y-positions from _compute_row_y.
-    Uses per-column linear regression (x = a*row + b) to track perspective
-    drift across rows, so angled/tilted photos are handled correctly.
+    Build a 20x4 grid of (x, y) sample centres for one answer block.
+    Per-column linear regression x = a*row_idx + b tracks perspective drift.
     """
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, 0.1)
     h, w = gray.shape
-
-    n_cols = min(4, len(block_pts))
     bxs = block_pts[:, 0].reshape(-1, 1).astype(np.float32)
+    n_cols = min(4, len(block_pts))
     col_labels, col_centers = _safe_kmeans(bxs, n_cols, criteria)
+
     if col_labels is None or n_cols < 4:
-        x_min_b, x_max_b = float(bxs.min()), float(bxs.max())
-        col_centers_list = np.linspace(x_min_b, x_max_b, 4).tolist()
-        col_labels = np.zeros((len(block_pts), 1), dtype=np.int32)
+        col_centers_list = np.linspace(float(bxs.min()), float(bxs.max()), 4).tolist()
+        col_labels_arr = np.zeros((len(block_pts), 1), dtype=np.int32)
         cluster_to_opt = {0: 0}
     else:
+        order = np.argsort(col_centers.flatten())
         col_centers_list = sorted(col_centers.flatten().tolist())
-        cluster_order = np.argsort(col_centers.flatten())
-        cluster_to_opt = {int(cluster_order[i]): i for i in range(len(cluster_order))}
+        cluster_to_opt = {int(order[i]): i for i in range(len(order))}
+        col_labels_arr = col_labels
 
-    # Group detected points by column (option index)
-    col_pts_by_opt = {opt_idx: [] for opt_idx in range(4)}
-    for i in range(len(block_pts)):
-        opt_idx = cluster_to_opt.get(int(col_labels[i][0]), -1)
-        if 0 <= opt_idx < 4:
-            col_pts_by_opt[opt_idx].append(block_pts[i])
+    col_pts: Dict[int, list] = {i: [] for i in range(4)}
+    for i, pt in enumerate(block_pts):
+        opt = cluster_to_opt.get(int(col_labels_arr[i][0]), -1)
+        if 0 <= opt < 4:
+            col_pts[opt].append(pt)
 
-    # For each column, fit a linear model x(row_y) = a*row_y + b so that
-    # sampling tracks perspective drift across rows instead of using a fixed x.
-    row_y_arr = np.array(row_y_sorted, dtype=np.float64)
+    row_y_arr = np.array(row_y, dtype=np.float64)
+    grid: Dict[int, List[Tuple[int, int]]] = {}
 
-    col_grid = {}
-    for opt_idx in range(4):
-        pts_list = col_pts_by_opt[opt_idx]
+    for opt in range(4):
+        pts_list = col_pts[opt]
         if len(pts_list) >= 2:
             px = np.array([p[0] for p in pts_list], dtype=np.float64)
             py = np.array([p[1] for p in pts_list], dtype=np.float64)
-            # find which row each detected point belongs to (nearest row_y)
-            row_indices = np.array([
-                int(np.argmin(np.abs(row_y_arr - yp))) for yp in py
-            ])
-            if len(np.unique(row_indices)) >= 2:
-                a, b = np.polyfit(row_indices, px, 1)
+            ri_of_pt = np.array([int(np.argmin(np.abs(row_y_arr - yp))) for yp in py])
+            if len(np.unique(ri_of_pt)) >= 2:
+                a, b = np.polyfit(ri_of_pt, px, 1)
             else:
                 a, b = 0.0, float(np.median(px))
         else:
-            # fallback: use column center from k-means
-            a, b = 0.0, col_centers_list[opt_idx] if opt_idx < len(col_centers_list) else 0.0
+            a, b = 0.0, (col_centers_list[opt] if opt < len(col_centers_list) else 0.0)
 
-        grid_col = []
-        for row_idx in range(20):
-            gx = int(round(a * row_idx + b))
-            gy = int(round(row_y_sorted[row_idx]))
+        col_grid = []
+        for ri in range(20):
+            gx = int(round(a * ri + b))
+            gy = int(round(row_y[ri]))
             gx = max(radius_est, min(w - radius_est - 1, gx))
             gy = max(radius_est, min(h - radius_est - 1, gy))
-            grid_col.append((gx, gy))
-        col_grid[opt_idx] = grid_col
+            col_grid.append((gx, gy))
+        grid[opt] = col_grid
 
-    return col_grid
-
-
-def _auto_rotate_image(img, gray):
-    """Auto-rotate image if detected as upside-down or severely tilted."""
-    # Detect edges
-    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-    lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=100, maxLineGap=10)
-    
-    if lines is not None and len(lines) > 5:
-        angles = []
-        for line in lines[:50]:  # Check first 50 lines
-            x1, y1, x2, y2 = line[0]
-            angle = np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi
-            angles.append(angle)
-        
-        median_angle = np.median(angles)
-        
-        # If significantly tilted, rotate
-        if abs(median_angle) > 2 and abs(median_angle) < 45:
-            h, w = img.shape[:2]
-            center = (w // 2, h // 2)
-            M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
-            img = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    return img, gray
+    return grid
 
 
-def detect_bubbles(img_path, debug_out=None):
+# ---------------------------------------------------------------------------
+# Main detection function
+# ---------------------------------------------------------------------------
+
+def detect_bubbles(
+    img_path: str,
+    debug_out: Optional[str] = None,
+) -> Tuple[
+    Dict[int, Optional[int]],
+    Dict[int, str],
+    Dict[int, Dict[int, float]],
+    Dict[int, float],
+]:
     """
-    Main detection function with advanced preprocessing and robust thresholding.
-    
-    Returns:
-        answers: Dict[int, Optional[int]] - Question number -> selected option (1-4) or None
-        flags: Dict[int, str] - Questions with detection warnings
-        results: Dict[int, Dict[int, float]] - Raw intensity values for all bubbles
+    Detect filled bubbles in a 40-question / 4-option OMR answer sheet.
+
+    Returns
+    -------
+    answers         : {question: option (1-4) or None}
+    flags           : {question: 'low_confidence'|'multi_mark'|'row_smudged'|'no_clear_mark'}
+    raw_intensities : {question: {option: mean_gray_value}}
+    confidence      : {question: score 0-100}
     """
     img = cv2.imread(img_path)
     if img is None:
         raise RuntimeError(f"Could not read image: {img_path}")
-    orig = img.copy()
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Auto-rotate if needed
-    img, gray = _auto_rotate_image(img, gray)
+
+    # Preprocessed grayscale via enhancer (shadow removal, CLAHE, sharpening, deskew)
+    gray = preprocess_for_omr(img_path)
+    img, gray = _auto_rotate(img, gray)
     h, w = gray.shape
 
-    raw_circles, gray_blur = _detect_circles(gray)
+    # --- Circle detection ---
+    raw_circles, _ = _detect_circles(gray)
     if raw_circles is None:
         raise RuntimeError(
-            f"No circles found in {img_path}. "
-            "Check that the image shows a clear OMR sheet with visible bubbles."
+            f"No circles detected in '{img_path}'. "
+            "Ensure the image shows a clear OMR sheet with visible bubbles."
         )
-    circles = np.round(raw_circles[0]).astype(int)
 
-    circles = [c for c in circles if 50 < c[0] < w - 50 and 200 < c[1] < h - 30]
+    circles = np.round(raw_circles[0]).astype(int).tolist()
+
+    # Remove circles too close to image borders
+    circles = [c for c in circles if 40 < c[0] < w - 40 and 150 < c[1] < h - 20]
     if len(circles) < 8:
-        raise RuntimeError(f"Too few circles detected ({len(circles)}) after filtering edges.")
+        raise RuntimeError(f"Too few circles after border filter ({len(circles)}).")
 
-    # filter to circles near median radius
+    # Keep only circles near the median radius
     radii = np.array([c[2] for c in circles])
-    r_med = np.median(radii)
-    circles = [c for c in circles if abs(c[2] - r_med) <= max(2, r_med * 0.35)]
+    r_med = float(np.median(radii))
+    circles = [c for c in circles if abs(c[2] - r_med) <= max(2.5, r_med * 0.35)]
     if len(circles) < 8:
-        raise RuntimeError(f"Too few circles remain ({len(circles)}) after radius filtering.")
+        raise RuntimeError(f"Too few circles after radius filter ({len(circles)}).")
 
-    # drop header debris (stamp/logo) using largest-gap strategy
-    ys_all = sorted(c[1] for c in circles)
-    n_total = len(ys_all)
-    window = min(50, n_total)
-    cut_y = None
-    best_gap = 0
-    for i in range(1, window):
-        gap = ys_all[i] - ys_all[i - 1]
-        if gap > 60 and gap > best_gap:
-            best_gap = gap
-            cut_y = ys_all[i]
+    # Drop header debris (logo/stamp) using the largest vertical gap
+    ys = sorted(c[1] for c in circles)
+    n_total = len(ys)
+    cut_y, best_gap = None, 0
+    for i in range(1, min(60, n_total)):
+        gap = ys[i] - ys[i - 1]
+        if gap > 55 and gap > best_gap:
+            remaining = sum(1 for y in ys if y >= ys[i])
+            if remaining >= max(8, n_total * 0.55):
+                best_gap = gap
+                cut_y = ys[i]
     if cut_y is not None:
         circles = [c for c in circles if c[1] >= cut_y]
     if len(circles) < 8:
-        raise RuntimeError(f"Too few circles remain ({len(circles)}) after outlier removal.")
+        raise RuntimeError(f"Too few circles after header removal ({len(circles)}).")
 
     pts = np.array([[c[0], c[1]] for c in circles])
     radius_est = int(np.median([c[2] for c in circles]))
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
 
-    # Split left/right answer blocks using the image X midpoint.
-    # K-means on 2 clusters is unreliable here because the sheet has a
-    # "question number" column printed in the middle (between the two answer
-    # grids). That column's circles pull the right-block centroid leftward,
-    # causing column offsets. A hard midpoint split is much more stable for
-    # this fixed two-block layout.
-    x_mid = w / 2.0
-    block_labels_arr = np.where(pts[:, 0] < x_mid, 0, 1).reshape(-1, 1).astype(np.int32)
-    block_labels = block_labels_arr
-    # left block = 0, right block = 1
-    left_block_id = 0
+    # Hard X-midpoint split — avoids k-means being thrown off by the
+    # printed question-number column between the two answer grids.
+    block_ids = np.where(pts[:, 0] < w / 2.0, 0, 1)
 
-    results = {}
-    bubble_details = {}  # Store detailed metrics for each bubble
-    debug_img = orig.copy()
-    
-    # Adaptive sample radius based on detected bubble size
-    sample_r = max(int(radius_est * 0.60), 7)
-    
-    # Apply advanced preprocessing for better fill detection
-    # Otsu thresholding to separate filled from unfilled
-    _, gray_thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    # Compute shared row y-positions from all points pooled across both blocks
-    row_y_sorted = _compute_row_y(pts)
+    row_y = _compute_row_y(pts)
+    sample_r = max(int(radius_est * 0.60), 6)
 
-    for block_id, q_offset in [(left_block_id, 0), (1 - left_block_id, 20)]:
-        mask = block_labels.flatten() == block_id
-        block_pts = pts[mask]
+    # Otsu binary map for filled-pixel ratio
+    _, gray_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    raw_intensities: Dict[int, Dict[int, float]] = {}
+    bubble_details: Dict[int, Dict[int, dict]] = {}
+    debug_img = img.copy()
+
+    for block_id, q_offset in [(0, 0), (1, 20)]:
+        block_pts = pts[block_ids == block_id]
 
         if len(block_pts) < 4:
-            for row_idx in range(20):
-                q_num = row_idx + 1 + q_offset
-                results[q_num] = {1: 255, 2: 255, 3: 255, 4: 255}
-                # Initialize bubble_details for skipped questions
-                bubble_details[q_num] = {
-                    1: {'mean': 255, 'filled_ratio': 0.0},
-                    2: {'mean': 255, 'filled_ratio': 0.0},
-                    3: {'mean': 255, 'filled_ratio': 0.0},
-                    4: {'mean': 255, 'filled_ratio': 0.0}
-                }
+            for ri in range(20):
+                q = ri + 1 + q_offset
+                raw_intensities[q] = {o: 255.0 for o in range(1, 5)}
+                bubble_details[q] = {o: {'mean': 255.0, 'filled_ratio': 0.0}
+                                     for o in range(1, 5)}
             continue
 
-        col_grid = _build_grid(block_pts, gray, radius_est, row_y_sorted)
+        col_grid = _build_grid(block_pts, gray, radius_est, row_y)
 
-        for row_idx in range(20):
-            q_num = row_idx + 1 + q_offset
-            row_vals = {}
-            bubble_details[q_num] = {}
-            
+        for ri in range(20):
+            q = ri + 1 + q_offset
+            raw_intensities[q] = {}
+            bubble_details[q] = {}
+
             for opt_idx in range(4):
-                x, y = col_grid[opt_idx][row_idx]
-                mask_c = np.zeros(gray.shape, dtype=np.uint8)
-                cv2.circle(mask_c, (x, y), sample_r, 255, -1)
-                
-                # Multi-metric bubble analysis
-                mean_val = cv2.mean(gray, mask=mask_c)[0]
-                
-                # Calculate filled pixel percentage using thresholded image
-                filled_pixels = cv2.countNonZero(cv2.bitwise_and(255 - gray_thresh, mask_c))
-                total_pixels = cv2.countNonZero(mask_c)
-                filled_ratio = filled_pixels / (total_pixels + 1e-6)
-                
-                # Store detailed metrics
-                bubble_details[q_num][opt_idx + 1] = {
-                    'mean': mean_val,
-                    'filled_ratio': filled_ratio
-                }
-                
-                row_vals[opt_idx + 1] = mean_val
-                
-                # Enhanced debug visualization
+                cx, cy = col_grid[opt_idx][ri]
+                circ_mask = np.zeros(gray.shape, dtype=np.uint8)
+                cv2.circle(circ_mask, (cx, cy), sample_r, 255, -1)
+
+                mean_val = float(cv2.mean(gray, mask=circ_mask)[0])
+
+                dark_px = cv2.countNonZero(
+                    cv2.bitwise_and(cv2.bitwise_not(gray_otsu), circ_mask)
+                )
+                total_px = cv2.countNonZero(circ_mask)
+                fill_ratio = dark_px / (total_px + 1e-9)
+
+                opt = opt_idx + 1
+                raw_intensities[q][opt] = mean_val
+                bubble_details[q][opt] = {'mean': mean_val, 'filled_ratio': fill_ratio}
+
                 if debug_out:
-                    color = (0, 255, 0) if filled_ratio < 0.15 else (0, 165, 255)
-                    cv2.circle(debug_img, (x, y), radius_est, color, 2)
-                    cv2.circle(debug_img, (x, y), 2, (0, 0, 255), -1)
-                    label = f"{q_num}.{opt_idx + 1}"
-                    cv2.putText(debug_img, label, (x - radius_est, y - radius_est - 3),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 0, 0), 1, cv2.LINE_AA)
-            results[q_num] = row_vals
+                    colour = (0, 200, 0) if fill_ratio < 0.15 else (0, 100, 255)
+                    cv2.circle(debug_img, (cx, cy), radius_est, colour, 2)
+                    cv2.putText(debug_img, f"{q}.{opt}",
+                                (cx - radius_est, cy - radius_est - 2),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.3, (200, 0, 0), 1, cv2.LINE_AA)
 
     if debug_out:
         cv2.imwrite(debug_out, debug_img)
 
-    # --- TWO-PASS VERIFICATION SYSTEM ---
-    # Pass 1: Intensity-based detection
-    # Pass 2: Filled-pixel-ratio verification
-    
-    all_vals = [v for opts in results.values() for v in opts.values()]
-    blank_baseline = float(np.median(all_vals))
-    q1_val = float(np.percentile(all_vals, 25))
-    q3_val = float(np.percentile(all_vals, 75))
-    
-    # Dynamic thresholds - RELAXED for better detection
-    darkness_factor = 1.0 - (blank_baseline / 255.0) * 0.3
-    global_fill_threshold = blank_baseline * (0.88 + darkness_factor * 0.05)  # Increased from 0.78
-    absolute_dark_threshold = min(q1_val * 1.6, blank_baseline * 0.72)  # Increased from 1.4 and 0.60
+    # --- Two-pass verification ---
+    all_vals = [v for row in raw_intensities.values() for v in row.values()]
+    # Upper quartile approximates the blank-bubble brightness
+    blank_baseline = float(np.percentile(all_vals, 75))
+    q15 = float(np.percentile(all_vals, 15))
 
-    answers = {}
-    flags = {}
-    confidence_scores = {}
-    
-    log(f"Blank baseline: {blank_baseline:.1f}, Q1: {q1_val:.1f}, Threshold: {global_fill_threshold:.1f}")
-    
-    for q in sorted(results.keys()):
-        opts = results[q]
-        sorted_opts = sorted(opts.items(), key=lambda x: x[1])
-        darkest_opt, darkest_val = sorted_opts[0]
-        second_opt, second_val = sorted_opts[1]
-        third_val = sorted_opts[2][1]
-        brightest_val = sorted_opts[3][1]
+    fill_threshold = blank_baseline * 0.82       # must be at least this dark
+    absolute_dark  = min(q15 * 1.5, blank_baseline * 0.68)  # definitely filled
 
-        # Get filled ratios for verification
-        darkest_filled_ratio = bubble_details[q][darkest_opt]['filled_ratio']
-        second_filled_ratio = bubble_details[q][second_opt]['filled_ratio']
-        
-        # Calculate decision metrics
-        row_mean = float(np.mean([v for _, v in sorted_opts]))
-        row_std = float(np.std([v for _, v in sorted_opts]))
-        gap_to_second = second_val - darkest_val
-        relative_gap = gap_to_second / (row_mean + 1e-6)
-        darkness_ratio = darkest_val / (blank_baseline + 1e-6)
-        
-        # MULTI-CRITERIA DECISION (Pass 1: Intensity) - RELAXED
-        pass1_obvious = darkest_val < absolute_dark_threshold
-        pass1_relative = relative_gap > 0.08 and gap_to_second > 3  # Reduced from 0.10 and 5
-        pass1_below_global = darkest_val < global_fill_threshold
-        
-        # VERIFICATION (Pass 2: Filled pixels) - RELAXED
-        pass2_filled = darkest_filled_ratio > 0.12  # Reduced from 0.18
-        pass2_distinct = darkest_filled_ratio > second_filled_ratio * 1.3  # Reduced from 1.5
-        
-        # COMBINED DECISION - More lenient: Either pass can confirm
-        is_filled_pass1 = (pass1_obvious or (pass1_below_global and pass1_relative))
-        is_filled_pass2 = (pass2_filled and pass2_distinct)
-        
-        # Final decision: Either pass OR weak evidence from both
-        is_filled = (is_filled_pass1 or is_filled_pass2) or \
-                   (pass1_below_global and darkest_filled_ratio > 0.10) or \
-                   (pass2_filled and darkest_val < global_fill_threshold * 1.05)
-        
-        # Confidence calculation - IMPROVED scoring
-        confidence = 0
+    _log(f"baseline={blank_baseline:.1f}  fill_thresh={fill_threshold:.1f}  "
+         f"abs_dark={absolute_dark:.1f}")
+
+    answers: Dict[int, Optional[int]] = {}
+    flags: Dict[int, str] = {}
+    confidence: Dict[int, float] = {}
+
+    for q in sorted(raw_intensities):
+        opts = raw_intensities[q]
+        ranked = sorted(opts.items(), key=lambda x: x[1])
+        darkest_opt, darkest_val = ranked[0]
+        second_opt,  second_val  = ranked[1]
+        brightest_val = ranked[3][1]
+
+        darkest_fill = bubble_details[q][darkest_opt]['filled_ratio']
+        second_fill  = bubble_details[q][second_opt]['filled_ratio']
+
+        row_mean = float(np.mean([v for _, v in ranked]))
+        row_std  = float(np.std([v for _, v in ranked]))
+        gap      = second_val - darkest_val
+        rel_gap  = gap / (row_mean + 1e-9)
+
+        # Pass 1 — intensity evidence
+        p1_obvious  = darkest_val < absolute_dark
+        p1_relative = rel_gap > 0.10 and gap > 4
+        p1_below    = darkest_val < fill_threshold
+        pass1 = p1_obvious or (p1_below and p1_relative)
+
+        # Pass 2 — filled-pixel evidence
+        p2_filled   = darkest_fill > 0.15
+        p2_distinct = darkest_fill > second_fill * 1.4
+        pass2 = p2_filled and p2_distinct
+
+        # Both must agree OR one is very strong
+        is_filled = (pass1 and pass2) or p1_obvious or (p2_filled and p1_below)
+
         if is_filled:
-            # More generous confidence calculation
-            intensity_conf = 45 * (1.0 - min(1.0, darkness_ratio))
-            gap_conf = 35 * min(1.0, relative_gap / 0.15)  # Easier to get full points
-            fill_conf = 20 * min(1.0, darkest_filled_ratio / 0.25)  # Lower bar
-            confidence = min(100, int(intensity_conf + gap_conf + fill_conf + 15))  # +15 base bonus
-        
-        # Decision logic - LESS FLAGGING
-        if is_filled:
-            answers[q] = darkest_opt
-            confidence_scores[q] = confidence
-            
-            # Multi-mark detection - stricter to reduce false positives
-            second_is_filled = (second_val < global_fill_threshold * 0.90 and 
-                              second_filled_ratio > 0.18 and
-                              relative_gap < 0.08)  # Very close marks
-            
-            if second_is_filled:
+            darkness_score = max(0.0, 1.0 - darkest_val / (blank_baseline + 1e-9))
+            gap_score      = min(1.0, rel_gap / 0.20)
+            fill_score     = min(1.0, darkest_fill / 0.30)
+            conf = int(min(100, darkness_score * 45 + gap_score * 35 + fill_score * 20))
+
+            answers[q]    = darkest_opt
+            confidence[q] = float(conf)
+
+            second_also_dark = (second_val < fill_threshold * 0.92
+                                and second_fill > 0.15
+                                and rel_gap < 0.07)
+            if second_also_dark:
                 flags[q] = "multi_mark"
-                confidence_scores[q] = max(30, confidence - 35)  # Less penalty
-                log(f"Q{q}: Multi-mark detected (opt {darkest_opt} & {second_opt})")
-            elif confidence < 45:  # Only flag if very low confidence (was 60)
+                confidence[q] = float(max(25, conf - 30))
+                _log(f"Q{q}: multi_mark (opts {darkest_opt} & {second_opt})")
+            elif conf < 40:
                 flags[q] = "low_confidence"
-                log(f"Q{q}: Low confidence {confidence}% (opt {darkest_opt})")
+                _log(f"Q{q}: low_confidence ({conf}%)")
         else:
-            # Check for problematic cases - only flag truly problematic rows
-            all_dark = brightest_val < global_fill_threshold * 0.85  # Stricter threshold
-            all_similar = row_std < 3  # Must be very similar
-            all_filled = all([bubble_details[q][i+1]['filled_ratio'] > 0.20 for i in range(4)])  # Higher bar
-            
+            answers[q]    = None
+            confidence[q] = 0.0
+
+            all_similar = row_std < 4
+            all_dark    = brightest_val < fill_threshold * 0.88
+            all_filled  = all(bubble_details[q][o]['filled_ratio'] > 0.18
+                              for o in range(1, 5))
             if (all_dark and all_similar) or all_filled:
                 flags[q] = "row_smudged"
-                log(f"Q{q}: Row appears smudged/dirty")
-            # Don't flag "no_clear_mark" - just leave blank without flagging
-            
-            answers[q] = None
-            confidence_scores[q] = 0
+                _log(f"Q{q}: row_smudged")
+            else:
+                flags[q] = "no_clear_mark"
+                _log(f"Q{q}: no_clear_mark")
 
-    return answers, flags, results, confidence_scores
+    return answers, flags, raw_intensities, confidence
 
 
-def score_sheet(answers, answer_key):
-    correct = {}
+# ---------------------------------------------------------------------------
+# Scoring & batch utilities
+# ---------------------------------------------------------------------------
+
+def score_sheet(
+    answers: Dict[int, Optional[int]],
+    answer_key: Dict[int, int],
+) -> Tuple[int, Dict[int, bool]]:
+    """Compare answers to the answer key. Returns (score, {q: is_correct})."""
+    correct: Dict[int, bool] = {}
     score = 0
     for q, key_opt in answer_key.items():
-        marked = answers.get(q)
-        is_correct = marked == key_opt
-        correct[q] = is_correct
-        if is_correct:
+        ok = answers.get(q) == key_opt
+        correct[q] = ok
+        if ok:
             score += 1
     return score, correct
 
 
-def batch_to_excel(image_paths, out_xlsx, answer_key=None, roll_numbers=None):
-    """Generate Excel report with color-coded confidence indicators."""
+def batch_to_excel(
+    image_paths: List[str],
+    out_xlsx: str,
+    answer_key: Optional[Dict[int, int]] = None,
+    roll_numbers: Optional[List[str]] = None,
+) -> None:
+    """Generate an Excel report with colour-coded confidence indicators."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
 
@@ -491,79 +486,71 @@ def batch_to_excel(image_paths, out_xlsx, answer_key=None, roll_numbers=None):
     ws.title = "OMR Results"
 
     header = ["Sheet #", "Roll No"] + [f"Q{i}" for i in range(1, 41)]
-    if answer_key:
-        header += ["Score", "Flagged Questions", "Avg Confidence"]
-    else:
-        header += ["Flagged Questions", "Avg Confidence"]
+    header += (["Score", "Flagged", "Avg Confidence"] if answer_key
+                else ["Flagged", "Avg Confidence"])
     ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
 
-    yellow = PatternFill("solid", start_color="FFFF00")  # Low confidence
-    orange = PatternFill("solid", start_color="FFA500")  # Multi-mark
-    red = PatternFill("solid", start_color="FF6B6B")     # No mark
+    fill_yellow = PatternFill("solid", start_color="FFFF00")
+    fill_orange = PatternFill("solid", start_color="FFA500")
+    fill_red    = PatternFill("solid", start_color="FF6B6B")
 
     for idx, path in enumerate(image_paths, start=1):
+        roll = (roll_numbers[idx - 1] if roll_numbers and idx <= len(roll_numbers) else "")
         try:
-            answers, flags, _, confidence_scores = detect_bubbles(path)
-            roll = roll_numbers[idx - 1] if roll_numbers and idx <= len(roll_numbers) else ""
-            row = [idx, roll] + [answers.get(q, "") for q in range(1, 41)]
-            
-            avg_confidence = int(np.mean([confidence_scores.get(q, 0) for q in range(1, 41)]))
-            
+            ans, flg, _, conf = detect_bubbles(path)
+            row = [idx, roll] + [ans.get(q, "") for q in range(1, 41)]
+            avg_conf = int(np.mean([conf.get(q, 0) for q in range(1, 41)]))
             if answer_key:
-                score, _ = score_sheet(answers, answer_key)
-                row += [score, ", ".join(f"Q{q}" for q in sorted(flags)), avg_confidence]
+                sc, _ = score_sheet(ans, answer_key)
+                row += [sc, ", ".join(f"Q{q}" for q in sorted(flg)), avg_conf]
             else:
-                row += [", ".join(f"Q{q}" for q in sorted(flags)), avg_confidence]
+                row += [", ".join(f"Q{q}" for q in sorted(flg)), avg_conf]
             ws.append(row)
-
-            row_num = ws.max_row
-            for q, flag_type in flags.items():
-                col_idx = 2 + q
-                if flag_type == "multi_mark":
-                    ws.cell(row=row_num, column=col_idx).fill = orange
-                elif flag_type == "low_confidence":
-                    ws.cell(row=row_num, column=col_idx).fill = yellow
-                elif flag_type in ["no_clear_mark", "row_smudged"]:
-                    ws.cell(row=row_num, column=col_idx).fill = red
-        except Exception as e:
-            # Add error row
-            row = [idx, roll_numbers[idx-1] if roll_numbers and idx <= len(roll_numbers) else ""] + ["ERROR"] * 40
-            row += [0, str(e), 0] if answer_key else [str(e), 0]
+            rn = ws.max_row
+            for q, ftype in flg.items():
+                col = 2 + q
+                if ftype == "multi_mark":
+                    ws.cell(row=rn, column=col).fill = fill_orange
+                elif ftype == "low_confidence":
+                    ws.cell(row=rn, column=col).fill = fill_yellow
+                elif ftype in ("no_clear_mark", "row_smudged"):
+                    ws.cell(row=rn, column=col).fill = fill_red
+        except Exception as exc:
+            row = [idx, roll] + ["ERROR"] * 40
+            row += ([0, str(exc), 0] if answer_key else [str(exc), 0])
             ws.append(row)
 
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = 10
-
     wb.save(out_xlsx)
 
 
-def print_simple_answers(answers, total_questions=40):
-    """Print 'Q{N}: Option X' for every question. Unmarked prints 'Not marked'."""
+def print_answers(answers: Dict[int, Optional[int]], total_questions: int = 40) -> None:
     for q in range(1, total_questions + 1):
         opt = answers.get(q)
-        if opt is None:
-            print(f"Q{q}: Not marked")
-        else:
-            print(f"Q{q}: {opt}")
+        print(f"Q{q}: {'Option ' + str(opt) if opt else 'Not marked'}")
 
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--batch":
-        out_xlsx = sys.argv[2]
-        images = sys.argv[3:]
-        batch_to_excel(images, out_xlsx)
-        print(f"Saved results for {len(images)} sheet(s) to {out_xlsx}")
+        _out = sys.argv[2]
+        _imgs = sys.argv[3:]
+        batch_to_excel(_imgs, _out)
+        print(f"Saved results for {len(_imgs)} sheet(s) to {_out}")
     else:
-        img_path = sys.argv[1]
-        debug_out = sys.argv[2] if len(sys.argv) > 2 else None
-        answers, flags, raw, confidence = detect_bubbles(img_path, debug_out)
-        print_simple_answers(answers)
-        
-        # Print confidence summary
-        flagged = [q for q in flags if flags[q] != "no_clear_mark" or answers[q] is not None]
-        if flagged:
-            print(f"\nWarnings on questions: {', '.join(map(str, sorted(flagged)))}")
-        avg_conf = int(np.mean([confidence.get(q, 0) for q in range(1, 41)]))
-        print(f"Average confidence: {avg_conf}%")
+        _path = sys.argv[1] if len(sys.argv) > 1 else None
+        if not _path:
+            print("Usage: python omr_scanner.py <image> [debug_out.jpg]")
+            sys.exit(1)
+        _debug = sys.argv[2] if len(sys.argv) > 2 else None
+        _ans, _flg, _, _conf = detect_bubbles(_path, _debug)
+        print_answers(_ans)
+        if _flg:
+            print(f"\nFlags: {', '.join(f'Q{q}={v}' for q, v in sorted(_flg.items()))}")
+        print(f"Avg confidence: {int(np.mean([_conf.get(q, 0) for q in range(1, 41)]))}%")
