@@ -2,15 +2,38 @@
 Sequential background processing queue using omr_scanner.py
 """
 import asyncio
+import sys
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
-from omr.omr_scanner import detect_bubbles
 from omr.enhancer import enhance_image
 import answer_key_store
 import results_store
 import session as sess_store
+
+# Add omr directory to path for importing template-based scanner
+sys.path.insert(0, str(Path(__file__).parent / "omr"))
+
+# Try to import template-based scanner
+try:
+    from scan_omr import load_template, scan_sheet, N_QUESTIONS
+    TEMPLATE_PATH = Path(__file__).parent / "omr" / "template.json"
+    _template = load_template(str(TEMPLATE_PATH))
+    TEMPLATE_AVAILABLE = True
+except (ImportError, Exception) as e:
+    print(f"Template-based scanner not available in queue_processor: {e}")
+    TEMPLATE_AVAILABLE = False
+    _template = None
+
+# Fallback to adaptive detector if template not available
+try:
+    from omr.omr_scanner import detect_bubbles
+    OMR_SCANNER_AVAILABLE = True
+except Exception as e:
+    print(f"OMR scanner not available in queue_processor: {e}")
+    OMR_SCANNER_AVAILABLE = False
 
 _sse_subscribers: Dict[str, List[asyncio.Queue]] = {}
 _sse_lock = threading.Lock()
@@ -67,10 +90,26 @@ def _process_sheet(session_id: str, sheet_meta: Dict[str, Any], index: int):
             scan_path = raw_path
 
         # 2. Scan the OMR sheet
-        answers_raw, flags, _, _conf = detect_bubbles(scan_path)
-        # 3. Convert to letters
-        answers = {q: OPTION_MAP.get(opt, "") if opt is not None else ""
-                   for q, opt in answers_raw.items()}
+        if TEMPLATE_AVAILABLE:
+            # Use template-based scanner from omr-scanner-fixed
+            rows, meta = scan_sheet(scan_path, _template)
+            # Convert to answers format
+            answers = {}
+            flags = {}
+            for r in rows:
+                q_num = r.get("Question")
+                answer = r.get("Answer")
+                status = r.get("Status", "OK")
+                answers[q_num] = answer
+                flags[q_num] = status.lower() if status != "OK" else "ok"
+        elif OMR_SCANNER_AVAILABLE:
+            # Fallback to adaptive detector
+            answers_raw, flags, _, _conf = detect_bubbles(scan_path)
+            # 3. Convert to letters
+            answers = {q: OPTION_MAP.get(opt, "") if opt is not None else ""
+                       for q, opt in answers_raw.items()}
+        else:
+            raise Exception("No OMR detection method available")
 
         # 4. Load answer key
         answer_key = answer_key_store.load()  # {q_num(int or str): letter}

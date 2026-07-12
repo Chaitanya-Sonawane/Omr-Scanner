@@ -4,21 +4,48 @@ FastAPI backend for OMR Evaluation Web Application.
 import asyncio
 import json
 import os
+import sys
+import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from threading import Lock
+from typing import Any, Dict, Optional
 
 import aiofiles
-from fastapi import FastAPI, File, HTTPException, UploadFile
+import numpy as np
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 import session as sess_store
-from omr.omr_scanner import detect_bubbles
-from omr.report import generate_report, generate_summary_report
-from queue_processor import enqueue_sheets, subscribe_sse, unsubscribe_sse
 import answer_key_store
 import results_store
+
+# Add omr directory to path for importing template-based scanner
+sys.path.insert(0, str(Path(__file__).parent / "omr"))
+
+# Try to import template-based scanner before other omr imports that may have dependency issues
+try:
+    from scan_omr import load_template, scan_sheet, N_QUESTIONS
+    TEMPLATE_PATH = Path(__file__).parent / "omr" / "template.json"
+    _template = load_template(str(TEMPLATE_PATH))
+    TEMPLATE_AVAILABLE = True
+except (ImportError, Exception) as e:
+    print(f"Template-based scanner not available: {e}")
+    TEMPLATE_AVAILABLE = False
+    _template = None
+    N_QUESTIONS = 40
+
+# Import other omr modules (may have torch/torchvision dependencies)
+try:
+    from omr.omr_scanner import detect_bubbles
+    from omr.report import generate_report, generate_summary_report
+    from queue_processor import enqueue_sheets, subscribe_sse, unsubscribe_sse
+    OMR_MODULES_AVAILABLE = True
+except Exception as e:
+    print(f"OMR modules not available (torch/torchvision dependency issue): {e}")
+    OMR_MODULES_AVAILABLE = False
 
 app = FastAPI(title="OMR Evaluator API")
 
@@ -31,6 +58,77 @@ app.add_middleware(
 
 ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".pdf"}
 MAX_SHEETS = 50
+
+# Mobile scan directories
+MOBILE_FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "mobile"
+MOBILE_UPLOAD_DIR = Path(__file__).parent / "mobile_uploads"
+MOBILE_UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Mobile scan session store
+class MobileSessionStore:
+    def __init__(self):
+        self._lock = Lock()
+        self._sessions: dict[str, dict] = {}
+
+    def create(self) -> str:
+        sid = uuid.uuid4().hex[:12]
+        with self._lock:
+            self._sessions[sid] = {
+                "id": sid,
+                "created_at": time.time(),
+                "sheets": [],
+            }
+        return sid
+
+    def get(self, sid: str) -> dict:
+        with self._lock:
+            s = self._sessions.get(sid)
+        if s is None:
+            raise HTTPException(404, f"Unknown session {sid}")
+        return s
+
+    def add_result(self, sid: str, summary: dict):
+        with self._lock:
+            session = self._sessions.setdefault(
+                sid, {"id": sid, "created_at": time.time(), "sheets": []}
+            )
+            session["sheets"].append(summary)
+
+    def stats(self, sid: str) -> dict:
+        session = self.get(sid)
+        sheets = session["sheets"]
+        n = len(sheets)
+        if n == 0:
+            return {"session_id": sid, "scanned": 0}
+        avg_conf = sum(s.get("avg_confidence", 0) for s in sheets) / n
+        needs_retake = sum(1 for s in sheets if s.get("retake_recommended", False))
+        total_flagged = sum(s.get("flagged_count", 0) for s in sheets)
+        return {
+            "session_id": sid,
+            "scanned": n,
+            "avg_confidence": round(avg_conf, 1),
+            "sheets_needing_retake": needs_retake,
+            "total_flagged_questions": total_flagged,
+            "sheets": sheets,
+        }
+
+mobile_sessions = MobileSessionStore()
+
+# JSON sanitizer for numpy types
+def _json_safe(obj):
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return _json_safe(obj.tolist())
+    return obj
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -73,15 +171,27 @@ async def upload_answer_key(session_id: str, file: UploadFile = File(...)):
     await _save_upload(file, dest)
 
     try:
-        answers_raw, flags, _, _conf = detect_bubbles(str(dest))
+        if TEMPLATE_AVAILABLE:
+            # Use template-based scanner from omr-scanner-fixed
+            rows, meta = scan_sheet(str(dest), _template)
+            OPTION_MAP = {1: "A", 2: "B", 3: "C", 4: "D"}
+            answer_key = {}
+            for r in rows:
+                q_num = r.get("Question")
+                answer = r.get("Answer")
+                answer_key[q_num] = OPTION_MAP.get(answer, "") if answer is not None else ""
+        elif OMR_MODULES_AVAILABLE:
+            # Fallback to adaptive detector
+            answers_raw, flags, _, _conf = detect_bubbles(str(dest))
+            OPTION_MAP = {1: "A", 2: "B", 3: "C", 4: "D"}
+            answer_key = {}
+            for q in range(1, 41):
+                opt = answers_raw.get(q)
+                answer_key[q] = OPTION_MAP.get(opt, "") if opt is not None else ""
+        else:
+            raise HTTPException(status_code=503, detail="No OMR detection modules available")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Answer key scan failed: {e}")
-
-    OPTION_MAP = {1: "A", 2: "B", 3: "C", 4: "D"}
-    answer_key = {}
-    for q in range(1, 41):
-        opt = answers_raw.get(q)
-        answer_key[q] = OPTION_MAP.get(opt, "") if opt is not None else ""
 
     # Save to session AND persistent store
     session_fmt = {f"q{k}": v for k, v in answer_key.items()}
@@ -146,6 +256,9 @@ def save_manual_answer_key_globally(body: Dict[str, Any]):
 async def upload_sheets(session_id: str, files: list[UploadFile] = File(...),
                         names: str = ""):
     """Upload student OMR sheets. Optional 'names' param: comma-separated student names."""
+    if not OMR_MODULES_AVAILABLE:
+        raise HTTPException(status_code=503, detail="OMR detection modules not available due to dependency issues")
+    
     s = _check_session(session_id)
 
     if not s.get("answer_key"):
@@ -433,3 +546,160 @@ async def debug_grid_check(session_id: str):
         "detection_info": "Uses Hough Circle Transform with adaptive grid calibration",
         "questions": debug_questions,
     }
+
+
+# ── Mobile Scan Endpoints ─────────────────────────────────────────────────────
+
+@app.post("/api/mobile/session")
+def create_mobile_session():
+    """Create a mobile scan session."""
+    return {"session_id": mobile_sessions.create()}
+
+
+@app.get("/api/mobile/session/{session_id}/stats")
+def get_mobile_session_stats(session_id: str):
+    """Get mobile session statistics."""
+    return _json_safe(mobile_sessions.stats(session_id))
+
+
+@app.post("/api/mobile/scan")
+async def mobile_scan(
+    image: UploadFile = File(...),
+    session_id: Optional[str] = Form(None),
+    sheet_label: Optional[str] = Form(None),
+):
+    """
+    Mobile scan endpoint - processes a pre-validated capture from the mobile frontend.
+    Uses template-based scanner if available, otherwise falls back to adaptive detector.
+    """
+    if image.content_type not in ("image/jpeg", "image/png", "image/webp"):
+        raise HTTPException(400, f"Unsupported content type: {image.content_type}")
+
+    sheet_id = uuid.uuid4().hex[:10]
+    suffix = Path(image.filename or "sheet.jpg").suffix or ".jpg"
+    dest = MOBILE_UPLOAD_DIR / f"{sheet_id}{suffix}"
+    data = await image.read()
+    if len(data) < 1024:
+        raise HTTPException(400, "Uploaded image is empty or too small")
+    dest.write_bytes(data)
+
+    try:
+        if TEMPLATE_AVAILABLE:
+            # Use template-based scanner
+            rows, meta = scan_sheet(str(dest), _template, debug_dir=str(MOBILE_UPLOAD_DIR / "debug"))
+            
+            # Build summary for mobile frontend
+            confidences = [r.get("Confidence", 0) for r in rows]
+            avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+            
+            flagged = [
+                {
+                    "question": r.get("Question"),
+                    "status": r.get("Status"),
+                    "confidence": r.get("Confidence"),
+                    "notes": r.get("Notes"),
+                }
+                for r in rows
+                if r.get("Status") in ("REVIEW", "MULTI") or r.get("Confidence", 0) < 50.0
+            ]
+            
+            retake_recommended = avg_conf < 55.0 or len(flagged) > 10
+            
+            summary = {
+                "avg_confidence": round(avg_conf, 1),
+                "flagged_count": len(flagged),
+                "flagged_questions": flagged,
+                "retake_recommended": retake_recommended,
+                "sheet_notes": meta.get("sheet_notes", []),
+                "align_quality": meta.get("align_quality", {}),
+                "image_quality": meta.get("image_quality", {}),
+            }
+            
+            result = _json_safe({
+                "sheet_id": sheet_id,
+                "sheet_label": sheet_label,
+                "questions": rows,
+                **summary,
+            })
+        else:
+            # Fallback to adaptive detector
+            answers, flags, raw_results, confidence = detect_bubbles(str(dest))
+            
+            # Convert to mobile-friendly format
+            questions = []
+            for q_num in range(1, 41):
+                questions.append({
+                    "Question": q_num,
+                    "Answer": answers.get(q_num),
+                    "Status": flags.get(q_num, "OK"),
+                    "Confidence": confidence,
+                    "Notes": "",
+                })
+            
+            avg_conf = confidence
+            flagged_count = sum(1 for f in flags.values() if f in ("REVIEW", "MULTI"))
+            retake_recommended = avg_conf < 55.0 or flagged_count > 10
+            
+            result = _json_safe({
+                "sheet_id": sheet_id,
+                "sheet_label": sheet_label,
+                "questions": questions,
+                "avg_confidence": round(avg_conf, 1),
+                "flagged_count": flagged_count,
+                "flagged_questions": [],
+                "retake_recommended": retake_recommended,
+            })
+            
+    except Exception as exc:
+        raise HTTPException(422, f"Could not process sheet: {exc}") from exc
+
+    if session_id:
+        mobile_sessions.add_result(
+            session_id,
+            _json_safe({
+                "sheet_id": sheet_id,
+                "sheet_label": sheet_label,
+                "avg_confidence": result.get("avg_confidence", 0),
+                "flagged_count": result.get("flagged_count", 0),
+                "retake_recommended": result.get("retake_recommended", False),
+            }),
+        )
+
+    return JSONResponse(result)
+
+
+@app.get("/api/mobile/config")
+def mobile_config():
+    """Expose template configuration for mobile frontend."""
+    if TEMPLATE_AVAILABLE:
+        return {
+            "canon_w": _template["canon_w"],
+            "canon_h": _template["canon_h"],
+            "target_aspect": _template["canon_w"] / _template["canon_h"],
+            "questions": N_QUESTIONS,
+            "options_per_question": 4,
+            "template_available": True,
+        }
+    else:
+        return {
+            "questions": 40,
+            "options_per_question": 4,
+            "template_available": False,
+        }
+
+
+@app.get("/api/mobile/health")
+def mobile_health():
+    """Health check for mobile frontend."""
+    return {
+        "status": "ok",
+        "template_available": TEMPLATE_AVAILABLE,
+        "questions": N_QUESTIONS if TEMPLATE_AVAILABLE else 40,
+    }
+
+
+# ── Static File Serving ─────────────────────────────────────────────────────────
+
+# Serve mobile frontend
+if MOBILE_FRONTEND_DIR.exists():
+    app.mount("/mobile", StaticFiles(directory=str(MOBILE_FRONTEND_DIR), html=True), name="mobile")

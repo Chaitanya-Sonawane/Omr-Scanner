@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createSession, openProgressStream, uploadSheets, submitManualAnswerKey } from './api.js'
 import AnswerKeyZone from './components/AnswerKeyZone.jsx'
+import CalibrateZone from './components/CalibrateZone.jsx'
+import MobileCapture from './components/MobileCapture.jsx'
 import QueuePanel from './components/QueuePanel.jsx'
 import ResultsView from './components/ResultsView.jsx'
 import SheetUploadZone from './components/SheetUploadZone.jsx'
@@ -33,12 +35,14 @@ export default function App() {
   // Hydrate from localStorage on first render
   const saved = loadPersistedState()
 
-  const [sessionId, setSessionId]   = useState(saved?.sessionId ?? null)
-  const [answerKey, setAnswerKey]   = useState(saved?.answerKey ?? null)
-  const [sheets, setSheets]         = useState(saved?.sheets ?? [])
-  const [batchDone, setBatchDone]   = useState(saved?.batchDone ?? false)
-  const [processing, setProcessing] = useState(false)
+  const [sessionId, setSessionId]     = useState(saved?.sessionId ?? null)
+  const [templateReady, setTemplateReady] = useState(false)
+  const [answerKey, setAnswerKey]     = useState(saved?.answerKey ?? null)
+  const [sheets, setSheets]           = useState(saved?.sheets ?? [])
+  const [batchDone, setBatchDone]     = useState(saved?.batchDone ?? false)
+  const [processing, setProcessing]   = useState(false)
   const [uploadError, setUploadError] = useState(null)
+  const [showMobile, setShowMobile]   = useState(false)
   const closeSSE      = useRef(null)
   const answerKeyRef  = useRef(answerKey)
   const activeSessionRef = useRef(sessionId)
@@ -177,6 +181,10 @@ export default function App() {
     )
   }
 
+  if (showMobile) {
+    return <MobileCapture onBack={() => setShowMobile(false)} sessionId={sessionId} />
+  }
+
   return (
     <div className={styles.page}>
       <header className={styles.header}>
@@ -190,6 +198,13 @@ export default function App() {
             Session: {sessionId.slice(0, 8)}
           </span>
           <button
+            className={styles.mobileBtn}
+            onClick={() => setShowMobile(true)}
+            title="Open mobile camera capture"
+          >
+            📱 Mobile Scan
+          </button>
+          <button
             className={styles.newSessionBtn}
             onClick={handleNewSession}
             title="Clear all data and start a brand-new session"
@@ -200,10 +215,12 @@ export default function App() {
       </header>
 
       <main className={styles.main}>
+        <CalibrateZone onCalibrated={() => setTemplateReady(true)} />
+
         <div className={styles.uploadRow}>
-          <AnswerKeyZone sessionId={sessionId} onKeyReady={handleKeyReady} />
+          <AnswerKeyZone sessionId={sessionId} onKeyReady={handleKeyReady} disabled={!templateReady} />
           <SheetUploadZone
-            disabled={!answerKey || processing}
+            disabled={!answerKey || processing || !templateReady}
             onProcess={handleProcess}
           />
         </div>
