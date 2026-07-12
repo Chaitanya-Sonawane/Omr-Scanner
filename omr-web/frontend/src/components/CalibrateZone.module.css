@@ -1,0 +1,95 @@
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+
+.topRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+.topRow:focus-visible { outline: 2px solid var(--blue); border-radius: 6px; }
+
+.heading {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.step { font-size: 16px; }
+.sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.chevron { font-size: 11px; color: var(--muted); margin-top: 4px; flex-shrink: 0; }
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+  background: var(--green-lt);
+  padding: 2px 9px;
+  border-radius: 999px;
+}
+
+.body { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+.infoBox {
+  font-size: 12px;
+  color: #1e40af;
+  background: var(--blue-lt);
+  border-left: 3px solid var(--blue);
+  padding: 8px 12px;
+  border-radius: 0 6px 6px 0;
+  line-height: 1.6;
+}
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 28px 16px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.dropzone:hover { border-color: var(--blue); background: var(--blue-lt); }
+.active   { border-color: var(--green) !important; background: var(--green-lt) !important; }
+.disabled { opacity: 0.5; cursor: not-allowed; }
+.hint { font-size: 11px; color: #94a3b8; }
+
+.spinner {
+  display: inline-block;
+  width: 16px; height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error   { font-size: 12px; color: var(--red); }
+.success { font-size: 12px; color: var(--green); font-weight: 600; }
+
+.metaRow {
+  display: flex;
+  gap: 20px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.metaRow strong { color: var(--text); }
