@@ -36,20 +36,23 @@
   // ---------------- config ----------------
   async function loadConfig() {
     try {
-      const res = await fetch('/api/mobile/config');
+      // Use the API URL from environment or fallback to relative path
+      const apiBase = window.VITE_API_URL ? `${window.VITE_API_URL}/api/mobile/config` : '/api/mobile/config';
+      const res = await fetch(apiBase);
       const cfg = await res.json();
       if (cfg.target_aspect) {
         OMRQuality.setTargetAspect(cfg.target_aspect);
       }
     } catch (e) {
-      console.warn('Could not load /api/mobile/config, using default aspect ratio', e);
+      console.warn('Could not load mobile config, using default aspect ratio', e);
     }
   }
 
   // ---------------- session/stats ----------------
   async function ensureSession() {
     if (state.sessionId) return state.sessionId;
-    const res = await fetch('/api/mobile/session', { method: 'POST' });
+    const apiBase = window.VITE_API_URL ? `${window.VITE_API_URL}/api/mobile/session` : '/api/mobile/session';
+    const res = await fetch(apiBase, { method: 'POST' });
     const data = await res.json();
     state.sessionId = data.session_id;
     return state.sessionId;
@@ -334,7 +337,8 @@
     if (!state.sessionId) { showView('home'); return; }
     let stats;
     try {
-      const res = await fetch(`/api/mobile/session/${state.sessionId}/stats`);
+      const apiBase = window.VITE_API_URL ? `${window.VITE_API_URL}/api/mobile/session/${state.sessionId}/stats` : `/api/mobile/session/${state.sessionId}/stats`;
+      const res = await fetch(apiBase);
       stats = await res.json();
     } catch (e) {
       stats = null;

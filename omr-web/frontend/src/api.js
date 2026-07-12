@@ -4,10 +4,38 @@ import axios from 'axios'
 const BASE = '/api'
 
 // SSE (EventSource) cannot follow Netlify redirects, so it hits Render directly.
-// VITE_API_URL is set in Netlify env vars to https://omr-scanner-1-cmbe.onrender.com
+// VITE_API_URL is set in Netlify env vars to the backend-2 Render URL
 const SSE_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : BASE
+
+// Mobile API also needs direct backend access for camera uploads
+const MOBILE_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api/mobile`
+  : '/api/mobile'
+
+export const createMobileSession = () =>
+  axios.post(`${MOBILE_BASE}/session`).then(r => r.data.session_id)
+
+export const mobileScan = (image, sessionId, sheetLabel) => {
+  const fd = new FormData()
+  fd.append('image', image)
+  if (sessionId) fd.append('session_id', sessionId)
+  if (sheetLabel) fd.append('sheet_label', sheetLabel)
+  return axios.post(`${MOBILE_BASE}/scan`, fd).then(r => r.data)
+}
+
+export const getMobileConfig = () =>
+  axios.get(`${MOBILE_BASE}/config`).then(r => r.data)
+
+export const calibrateTemplate = (file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return axios.post(`${BASE}/calibrate`, fd).then(r => r.data)
+}
+
+export const getTemplateInfo = () =>
+  axios.get(`${BASE}/template`).then(r => r.data).catch(() => null)
 
 export const createSession = () =>
   axios.post(`${BASE}/session`).then(r => r.data.session_id)

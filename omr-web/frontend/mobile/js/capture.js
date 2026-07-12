@@ -350,7 +350,8 @@ const OMRCapture = (() => {
     form.append('image', blob, 'sheet.jpg');
     if (sessionId) form.append('session_id', sessionId);
     if (sheetLabel) form.append('sheet_label', sheetLabel);
-    const resp = await fetch('/api/mobile/scan', { method: 'POST', body: form });
+    const apiBase = window.VITE_API_URL ? `${window.VITE_API_URL}/api/mobile/scan` : '/api/mobile/scan';
+    const resp = await fetch(apiBase, { method: 'POST', body: form });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       throw new Error(`Upload failed (${resp.status}): ${text}`);
