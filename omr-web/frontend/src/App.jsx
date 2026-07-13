@@ -237,6 +237,7 @@ export default function App() {
           <ResultsView
             sessionId={activeSessionRef.current}
             sheets={sheets}
+            onNewSession={handleNewSession}
           />
         )}
       </main>

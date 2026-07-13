@@ -40,8 +40,8 @@ export default function QueuePanel({ sheets }) {
               {sh.status === 'ERROR' && <span className={styles.errMsg}>{sh.error}</span>}
             </div>
             <div className={styles.right}>
-              {sh.score && sh.status === 'DONE' && (
-                <span className={styles.score}>{sh.score.correct ?? sh.score.total}/40</span>
+              {sh.score != null && sh.status === 'DONE' && (
+                <span className={styles.score}>{sh.score.correct ?? sh.score.total ?? sh.score}/40</span>
               )}
               <ConfidenceBar value={sh.confidence} />
               <StatusBadge status={sh.status} />

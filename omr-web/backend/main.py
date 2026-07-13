@@ -460,8 +460,13 @@ def export_excel():
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     wb.save(tmp.name)
     tmp.close()
-    return FileResponse(path=tmp.name, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        filename="omr_results.xlsx")
+    from starlette.background import BackgroundTask
+    return FileResponse(
+        path=tmp.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename="omr_results.xlsx",
+        background=BackgroundTask(os.unlink, tmp.name),
+    )
 
 
 @app.delete("/api/session/{session_id}")

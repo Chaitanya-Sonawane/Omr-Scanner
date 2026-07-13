@@ -131,7 +131,7 @@
       $('#status-banner').dataset.state = 'searching';
       $('#batch-count').textContent = state.sheetsScanned;
 
-      await ensureSession();
+      try { await ensureSession(); } catch (e) { console.warn('Session init failed, proceeding without session_id:', e); }
 
       const video = $('#video');
       const analyzeCanvas = $('#canvas-analyze');

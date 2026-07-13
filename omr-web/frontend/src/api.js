@@ -66,13 +66,13 @@ export const getResults = (sessionId) =>
   axios.get(`${BASE}/session/${sessionId}/results`).then(r => r.data)
 
 export const getReportUrl = (sessionId) =>
-  `${BASE}/session/${sessionId}/export/pdf`
+  `${BASE}/session/${sessionId}/report`
 
 export const getSummaryReportUrl = () =>
-  `${BASE}/export/all-students/pdf`
+  `${BASE}/summary-report`
 
 export const getExcelExportUrl = (sessionId) =>
-  sessionId ? `${BASE}/session/${sessionId}/export/excel` : null
+  `${BASE}/export/excel`
 
 export const useSavedAnswerKey = (sessionId) =>
   axios.post(`${BASE}/session/${sessionId}/answer-key/use-saved`).then(r => r.data)
