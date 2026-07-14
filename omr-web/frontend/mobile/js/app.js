@@ -122,6 +122,17 @@
   async function openCamera() {
     if (openingCamera) return;
     openingCamera = true;
+    
+    // Check if getUserMedia is supported
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showView('camera');
+      $('#status-text').textContent = 'Camera not supported';
+      $('#status-detail').textContent = 'Your browser doesn\'t support camera access. Try Chrome or Safari.';
+      $('#status-banner').dataset.state = 'error';
+      openingCamera = false;
+      return;
+    }
+    
     // Bump a token so any in-flight triggerCapture() from a PREVIOUS
     // camera session can recognize it's stale once this new session
     // takes over (see triggerCapture below).
@@ -140,12 +151,16 @@
       const cam = new OMRCapture.CameraSession(video, analyzeCanvas, captureCanvas);
 
       try {
+        $('#status-text').textContent = 'Requesting camera permission…';
         await cam.start(currentFacingMode);
+        $('#status-text').textContent = 'Camera ready';
       } catch (e) {
+        console.error('[App] Camera start failed:', e);
         if (myToken !== state.cameraToken) { cam.stop(); return; } // superseded while starting
         $('#status-text').textContent = 'Camera access failed';
         $('#status-detail').textContent = e.message || String(e);
         $('#status-banner').dataset.state = 'error';
+        openingCamera = false;
         return;
       }
 
