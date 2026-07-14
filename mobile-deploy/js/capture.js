@@ -45,14 +45,14 @@ const OMRCapture = (() => {
 
       // Timeout so a silently-hung OpenCV init doesn't block the camera forever.
       const timeout = setTimeout(() => {
-        reject(new Error('OpenCV.js took too long to initialise — check network connectivity'));
-      }, 20000);
+        reject(new Error('OpenCV.js took too long to initialise — try reloading the page'));
+      }, 30000);
 
       const finish = (result) => { clearTimeout(timeout); resolve(result); };
       const fail = (err) => { clearTimeout(timeout); reject(err); };
 
       const script = document.createElement('script');
-      script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
+      script.src = '/js/opencv.js';
       script.async = true;
       script.onload = () => {
         const check = () => {
