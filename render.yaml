@@ -2,9 +2,9 @@ services:
   - type: web
     name: omr-scanner-api
     runtime: python
-    rootDir: .
-    buildCommand: pip install -r requirements.txt && mkdir -p data/sessions
-    startCommand: uvicorn api_server:app --host 0.0.0.0 --port $PORT
+    rootDir: omr-web/backend
+    buildCommand: pip install -r requirements.txt && mkdir -p data/sessions mobile_uploads
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION

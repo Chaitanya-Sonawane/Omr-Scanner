@@ -155,6 +155,12 @@ async def _save_upload(upload: UploadFile, dest: Path):
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+@app.get("/health")
+def health():
+    """Health check endpoint (used by Render's healthCheckPath)."""
+    return {"status": "ok"}
+
+
 @app.post("/api/session")
 def create_session():
     s = sess_store.create_session()
