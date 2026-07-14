@@ -360,6 +360,54 @@
     } else {
       flaggedList.innerHTML = '';
     }
+
+    renderAnswers(result.questions);
+  }
+
+  // Map the backend's numeric option (1..4) to a printed A/B/C/D label so
+  // each question number shows the actual scanned option. BLANK/MULTI/REVIEW
+  // are rendered with distinct glyphs instead of a letter.
+  const OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  function optionLabel(q) {
+    const status = (q.Status || q.status || 'OK').toUpperCase();
+    if (status === 'MULTI') return { text: '✱', cls: 'flag' };
+    if (status === 'REVIEW') return { text: '?', cls: 'flag' };
+    // Selected option can be an int (1-based), a letter, or empty/None.
+    let opt = q.Selected_Option;
+    if (opt === undefined || opt === null || opt === '') opt = q.Answer;
+    if (opt === undefined || opt === null || opt === '') return { text: '—', cls: 'blank' };
+    if (typeof opt === 'number' || /^\d+$/.test(String(opt))) {
+      const idx = parseInt(opt, 10) - 1;
+      const letter = OPTION_LETTERS[idx];
+      if (letter) return { text: letter, cls: 'ok' };
+      return { text: '—', cls: 'blank' };
+    }
+    return { text: String(opt).toUpperCase(), cls: 'ok' };
+  }
+
+  function renderAnswers(questions) {
+    const block = $('#answers-block');
+    const grid = $('#answers-grid');
+    if (!block || !grid) return;
+    if (!Array.isArray(questions) || !questions.length) {
+      block.hidden = true;
+      grid.innerHTML = '';
+      return;
+    }
+    // Preserve the sheet's question order (1..N).
+    const rows = [...questions].sort(
+      (a, b) => (a.Question ?? a.question ?? 0) - (b.Question ?? b.question ?? 0)
+    );
+    grid.innerHTML = rows.map(q => {
+      const num = q.Question ?? q.question;
+      const { text, cls } = optionLabel(q);
+      return `
+        <div class="ans-cell ans-cell--${cls}">
+          <span class="ans-num">${num}</span>
+          <span class="ans-opt">${text}</span>
+        </div>`;
+    }).join('');
+    block.hidden = false;
   }
 
   function retakeCurrentSheet() {

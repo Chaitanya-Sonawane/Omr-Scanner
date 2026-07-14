@@ -91,6 +91,70 @@ button { font-family: inherit; }
 
 .hud-corner-tick { stroke: var(--warn); stroke-width: 2.4; vector-effect: non-scaling-stroke; }
 
+/* ---------- per-question detected-answers grid (result screen) ---------- */
+.answers-block {
+  width: 100%;
+  margin: 16px 0 4px;
+  text-align: left;
+}
+.answers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.answers-title {
+  font-family: var(--font-display, sans-serif);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text, #e7ebf2);
+}
+.answers-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.answers-legend .lg {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 3px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.answers-legend .lg--ok { background: var(--ready); }
+.answers-legend .lg--blank { background: #3a3f49; }
+.answers-legend .lg--flag { background: var(--warn); }
+
+.answers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 2px;
+}
+.ans-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--panel, #14171d);
+  border: 1px solid rgba(255,255,255,0.06);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+.ans-num { font-size: 11px; color: var(--muted); }
+.ans-opt { font-size: 15px; font-weight: 600; color: var(--text, #e7ebf2); }
+.ans-cell--ok { border-color: rgba(52,211,153,0.5); }
+.ans-cell--ok .ans-opt { color: var(--ready); }
+.ans-cell--blank .ans-opt { color: var(--muted); }
+.ans-cell--flag { border-color: rgba(245,185,66,0.55); }
+.ans-cell--flag .ans-opt { color: var(--warn); }
+
 /* ---------- fixed alignment guide (red -> green corner beams) ---------- */
 .align-frame {
   position: absolute;

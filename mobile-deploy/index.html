@@ -143,6 +143,19 @@
     <div class="result-notes" id="result-notes"></div>
     <div class="flagged-list" id="flagged-list"></div>
 
+    <!-- Per-question detected options (A/B/C/D) mapped to each question no. -->
+    <div class="answers-block" id="answers-block" hidden>
+      <div class="answers-head">
+        <span class="answers-title">Detected Answers</span>
+        <span class="answers-legend">
+          <i class="lg lg--ok"></i>marked
+          <i class="lg lg--blank"></i>blank
+          <i class="lg lg--flag"></i>review
+        </span>
+      </div>
+      <div class="answers-grid" id="answers-grid"></div>
+    </div>
+
     <div class="result-actions">
       <button id="btn-retake" class="btn btn--outline">Retake This Sheet</button>
       <button id="btn-next" class="btn btn--primary">Scan Next Sheet</button>
