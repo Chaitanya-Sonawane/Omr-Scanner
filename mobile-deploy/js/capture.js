@@ -42,19 +42,28 @@ const OMRCapture = (() => {
     if (cvReadyPromise) return cvReadyPromise;
     cvReadyPromise = new Promise((resolve, reject) => {
       if (window.cv && window.cv.Mat) { resolve(window.cv); return; }
+
+      // Timeout so a silently-hung OpenCV init doesn't block the camera forever.
+      const timeout = setTimeout(() => {
+        reject(new Error('OpenCV.js took too long to initialise — check network connectivity'));
+      }, 20000);
+
+      const finish = (result) => { clearTimeout(timeout); resolve(result); };
+      const fail = (err) => { clearTimeout(timeout); reject(err); };
+
       const script = document.createElement('script');
       script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
       script.async = true;
       script.onload = () => {
         const check = () => {
           if (window.cv && (window.cv.Mat || window.cv.onRuntimeInitialized)) {
-            if (window.cv.Mat) resolve(window.cv);
-            else window.cv.onRuntimeInitialized = () => resolve(window.cv);
+            if (window.cv.Mat) finish(window.cv);
+            else window.cv.onRuntimeInitialized = () => finish(window.cv);
           } else setTimeout(check, 30);
         };
         check();
       };
-      script.onerror = () => reject(new Error('Failed to load OpenCV.js — check network connectivity'));
+      script.onerror = () => fail(new Error('Failed to load OpenCV.js — check network connectivity'));
       document.head.appendChild(script);
     });
     return cvReadyPromise;
@@ -75,18 +84,34 @@ const OMRCapture = (() => {
     }
 
     async start() {
-      this.cv = await loadOpenCV();
-
+      // Camera first — get the permission prompt up immediately before
+      // anything else. Advanced constraints (focusMode) are stripped out
+      // because they cause getUserMedia to throw on many browsers/devices
+      // that don't advertise support for them as a required constraint.
       const constraints = {
         audio: false,
         video: {
           facingMode: { ideal: 'environment' },
           width: { ideal: 3840 },
           height: { ideal: 2160 },
-          advanced: [{ focusMode: 'continuous' }],
         },
       };
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      // Attempt with high-res first; fall back to a basic constraint set
+      // if the device rejects the ideal resolutions (some Android WebViews do).
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') throw e;
+        // Retry with minimal constraints
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' } } });
+      }
+
+      // Load OpenCV in parallel while the video preview is already running.
+      const cv = await loadOpenCV();
+      this.cv = cv;
+      this.stream = stream;
       this.video.srcObject = this.stream;
       await new Promise(res => {
         if (this.video.readyState >= 2) res();

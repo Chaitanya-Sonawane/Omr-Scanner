@@ -141,9 +141,12 @@
       try {
         await cam.start();
       } catch (e) {
-        if (myToken !== state.cameraToken) { cam.stop(); return; } // superseded while starting
+        if (myToken !== state.cameraToken) { cam.stop(); return; }
         $('#status-text').textContent = 'Camera access failed';
-        $('#status-detail').textContent = e.message || String(e);
+        const msg = e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError'
+          ? 'Camera permission denied — tap the camera icon in your browser address bar and allow access, then try again.'
+          : (e.message || String(e));
+        $('#status-detail').textContent = msg;
         $('#status-banner').dataset.state = 'error';
         return;
       }
