@@ -54,6 +54,7 @@
     if (state.sessionId) return state.sessionId;
     const apiBase = window.VITE_API_URL ? `${window.VITE_API_URL}/api/mobile/session` : '/api/mobile/session';
     const res = await fetch(apiBase, { method: 'POST' });
+    if (!res.ok) throw new Error(`Session request failed (${res.status})`);
     const data = await res.json();
     state.sessionId = data.session_id;
     return state.sessionId;
@@ -127,7 +128,12 @@
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showView('camera');
       $('#status-text').textContent = 'Camera not supported';
-      $('#status-detail').textContent = 'Your browser doesn\'t support camera access. Try Chrome or Safari.';
+      // Browsers only expose getUserMedia in a secure context: https:// or
+      // http://localhost. Opening the page over plain http://<LAN-IP> from a
+      // phone is the most common cause of this branch firing.
+      $('#status-detail').textContent = window.isSecureContext === false
+        ? 'Camera requires a secure connection. Open this page over HTTPS (or via http://localhost on this device).'
+        : 'Your browser doesn\'t support camera access. Try Chrome or Safari.';
       $('#status-banner').dataset.state = 'error';
       openingCamera = false;
       return;
@@ -143,7 +149,12 @@
       $('#status-banner').dataset.state = 'searching';
       $('#batch-count').textContent = state.sheetsScanned;
 
-      await ensureSession();
+      // Create the session in the background - the camera must open even
+      // if the backend is slow or briefly unreachable. If it fails here,
+      // triggerCapture() retries ensureSession() before uploading.
+      ensureSession().catch((e) => {
+        console.warn('[App] Could not create session yet (will retry at upload):', e);
+      });
 
       const video = $('#video');
       const analyzeCanvas = $('#canvas-analyze');
@@ -185,13 +196,31 @@
         $('#status-detail').textContent = 'The camera stream stopped unexpectedly — close and reopen the camera to continue.';
       };
 
-      cam.runAnalysisLoop((metrics, verdict) => {
-        if (myToken !== state.cameraToken || state.capturing) return;
-        drawHud(metrics, verdict);
-        setStatus(verdict);
-        const progress = state.stability.update(metrics, verdict);
-        setRing(progress);
-      });
+      if (cam.cv) {
+        cam.runAnalysisLoop((metrics, verdict) => {
+          if (myToken !== state.cameraToken || state.capturing) return;
+          drawHud(metrics, verdict);
+          setStatus(verdict);
+          const progress = state.stability.update(metrics, verdict);
+          setRing(progress);
+        });
+      } else {
+        // OpenCV.js failed to load (offline / blocked CDN): live guidance
+        // and auto-capture are unavailable, but the camera preview works
+        // and the user can still capture manually.
+        $('#status-banner').dataset.state = 'warn';
+        $('#status-text').textContent = 'Live guidance unavailable';
+        $('#status-detail').textContent = 'Frame the sheet and tap Capture manually.';
+      }
+    } catch (e) {
+      // Never leave the user stuck on "Starting camera…" - surface any
+      // unexpected failure on the status banner instead.
+      console.error('[App] openCamera failed:', e);
+      if (myToken === state.cameraToken) {
+        $('#status-banner').dataset.state = 'error';
+        $('#status-text').textContent = 'Could not start camera';
+        $('#status-detail').textContent = e.message || String(e);
+      }
     } finally {
       openingCamera = false;
     }
@@ -263,6 +292,10 @@
 
       const blob = await OMRCapture.compressCanvas(canvas);
       const sheetLabel = `Sheet ${state.sheetsScanned + 1}`;
+      // Session creation is non-blocking at camera open; make sure we have
+      // one now (retry) so the scan is recorded against a session.
+      try { await ensureSession(); } catch (e) { console.warn('[App] Proceeding without session:', e); }
+      if (stale()) return;
       const result = await OMRCapture.uploadSheet(blob, { sessionId: state.sessionId, sheetLabel });
       // Capture completed after the user navigated away from this camera
       // session: drop the result from the LOCAL UI silently rather than

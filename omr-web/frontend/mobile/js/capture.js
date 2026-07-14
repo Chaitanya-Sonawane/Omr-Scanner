@@ -84,6 +84,14 @@ const OMRCapture = (() => {
 
     async start(facingMode = 'environment') {
       console.log('[Camera] Starting with facingMode:', facingMode);
+      // Kick off the OpenCV.js download in parallel with getUserMedia so the
+      // live preview never waits on a large network download. If OpenCV
+      // fails to load, the camera still opens - live guidance is disabled
+      // and the user can capture manually.
+      const cvPromise = loadOpenCV().catch((e) => {
+        console.warn('[Camera] OpenCV.js failed to load - live guidance disabled:', e);
+        return null;
+      });
       // Try exact rear camera first, fall back to ideal, then any camera
       let stream = null;
       const attempts = [
@@ -108,10 +116,8 @@ const OMRCapture = (() => {
       }
       if (!stream) throw lastErr || new Error('Could not access camera');
 
-      console.log('[Camera] Loading OpenCV...');
-      const cv = await loadOpenCV();
-      console.log('[Camera] OpenCV loaded');
-      this.cv = cv;
+      // Attach the stream to the <video> element IMMEDIATELY so the user
+      // sees the live preview right away instead of a blank screen.
       this.stream = stream;
       this.video.srcObject = null; // reset before reassigning
       this.video.srcObject = this.stream;
@@ -141,6 +147,11 @@ const OMRCapture = (() => {
       }
       this.stopped = false;
 
+      // Now wait for OpenCV - the preview is already live, so a slow or
+      // failed download no longer blanks the screen.
+      this.cv = await cvPromise;
+      if (this.cv) console.log('[Camera] OpenCV loaded');
+
       // Mobile browsers/OSes can reclaim the camera at any time - the tab
       // is backgrounded, another app opens the camera, the device sleeps,
       // or (on some Android WebViews) a long session is silently killed
@@ -164,6 +175,10 @@ const OMRCapture = (() => {
      * quality.js and the guidance verdict from guidance.js.
      */
     runAnalysisLoop(onFrame) {
+      if (!this.cv) {
+        console.warn('[Camera] OpenCV unavailable - skipping live analysis loop');
+        return;
+      }
       const cv = this.cv;
       const canvas = this.analyzeCanvas;
       let lastTs = 0;
@@ -288,6 +303,11 @@ const OMRCapture = (() => {
      */
     validateFullRes(canvas) {
       const cv = this.cv;
+      if (!cv) {
+        // OpenCV never loaded - we can't pre-validate, so pass the capture
+        // through and let the backend be the quality gate.
+        return { pass: true, reasons: [], metrics: null };
+      }
 
       // 1) Geometry pass on a small working copy - cheap, and corner
       // position doesn't need full resolution.
