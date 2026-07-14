@@ -1,16 +1,10 @@
 [build]
-  command = "npm run build"
+  command = "npm run build && cp -r mobile dist/"
   publish = "dist"
 
 [[redirects]]
   from = "/api/*"
   to = "https://omr-scanner-backend.onrender.com/api/:splat"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/mobile/*"
-  to = "https://omr-scanner-backend.onrender.com/mobile/:splat"
   status = 200
   force = true
 
