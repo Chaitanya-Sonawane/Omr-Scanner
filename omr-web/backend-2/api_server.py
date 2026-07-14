@@ -46,7 +46,34 @@ from reportlab.platypus import (
     HRFlowable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
+import numpy as np
+
 from omr_engine import load_template, scan_image
+
+
+# ── JSON sanitizer for numpy types ───────────────────────────────────────────
+# The template scanner (omr_engine.scan_image) returns numpy scalar types
+# (np.bool_, np.integer, np.floating) inside the per-question results and the
+# align/image-quality metadata. FastAPI's default response serialization
+# (jsonable_encoder) cannot encode these - e.g. np.bool_ raises
+# "'numpy.bool_' object is not iterable" - which surfaces as an opaque HTTP 500
+# AFTER the scan already succeeded. Convert everything to native Python types
+# before returning so the mobile frontend always gets clean JSON.
+def _json_safe(obj):
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return _json_safe(obj.tolist())
+    return obj
+
 
 # ── App setup ──────────────────────────────────────────────────────────────
 app = FastAPI(title="OMR Scanner API v2 (template-based)", version="2.0")
@@ -914,12 +941,12 @@ async def mobile_scan(
             "image_quality": result["meta"].get("image_quality", {}),
         }
         
-        mobile_result = {
+        mobile_result = _json_safe({
             "sheet_id": sheet_id,
             "sheet_label": sheet_label,
             "questions": result["questions"],
             **summary,
-        }
+        })
         
     except Exception as exc:
         raise HTTPException(422, f"Could not process sheet: {exc}") from exc
@@ -927,13 +954,13 @@ async def mobile_scan(
     if session_id:
         mobile_sessions.add_result(
             session_id,
-            {
+            _json_safe({
                 "sheet_id": sheet_id,
                 "sheet_label": sheet_label,
                 "avg_confidence": mobile_result.get("avg_confidence", 0),
                 "flagged_count": mobile_result.get("flagged_count", 0),
                 "retake_recommended": mobile_result.get("retake_recommended", False),
-            },
+            }),
         )
 
     return mobile_result

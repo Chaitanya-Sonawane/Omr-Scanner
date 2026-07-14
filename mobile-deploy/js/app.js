@@ -373,7 +373,11 @@
     if (status === 'MULTI') return { text: '✱', cls: 'flag' };
     if (status === 'REVIEW') return { text: '?', cls: 'flag' };
     // Selected option can be an int (1-based), a letter, or empty/None.
+    // Field name varies by backend: the template scanner in omr-web/backend
+    // returns `Selected_Option`, the deployed omr_engine (backend-2) returns
+    // `option`, and older adaptive detectors used `Answer` - accept all.
     let opt = q.Selected_Option;
+    if (opt === undefined || opt === null || opt === '') opt = q.option;
     if (opt === undefined || opt === null || opt === '') opt = q.Answer;
     if (opt === undefined || opt === null || opt === '') return { text: '—', cls: 'blank' };
     if (typeof opt === 'number' || /^\d+$/.test(String(opt))) {
