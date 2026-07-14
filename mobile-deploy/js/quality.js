@@ -22,9 +22,13 @@ const OMRQuality = (() => {
 
   // ---- tunables (analysis runs on a downscaled ~480px-wide frame) ----
   const CFG = {
-    minAreaFrac: 0.30,       // sheet must fill at least this much of the frame
+    minAreaFrac: 0.30,       // sheet must be at least this big to be considered a candidate at all
     maxAreaFrac: 0.97,       // above this, corners are likely clipped
-    idealAreaFrac: [0.45, 0.90],
+    // Auto-capture is only allowed while coverage sits inside this band. The
+    // product spec requires the sheet to fill ~70-90% of the frame before we
+    // capture, so readiness is gated on idealAreaFrac (not the loose
+    // minAreaFrac), guaranteeing a large, high-detail capture for the backend.
+    idealAreaFrac: [0.70, 0.90],
     aspectTolerance: 0.14,   // relative error allowed vs TARGET_ASPECT
     cornerAngleTolDeg: 18,   // how rectangular the quad must look
     centerTolFrac: 0.10,     // centroid offset allowed, as frac of frame dim
@@ -101,8 +105,34 @@ const OMRQuality = (() => {
       cv.findContours(mat, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
       let best = null; // {score, quad, method}
-      const n = Math.min(contours.size(), 25);
-      for (let i = 0; i < n; i++) {
+
+      // Sort candidate contours by area (largest first) BEFORE limiting to
+      // the top 25 - this mirrors backend/core/align.py, which does exactly
+      // this. cv.findContours returns contours in an implementation-defined
+      // order (roughly by discovery position, NOT by size), so on a real OMR
+      // sheet - which produces dozens of small bubble/text contours - the
+      // single large sheet outline was frequently NOT among the first 25
+      // examined and got skipped entirely, or a smaller stray contour won
+      // the scoring. Sorting first makes the frontend actually "locate the
+      // largest rectangular document" and stay consistent with the backend.
+      // Measure each contour's area exactly once (deleting the temporary Mat
+      // wrapper cv.MatVector.get() allocates - doing this inside a sort
+      // comparator would leak a Mat per comparison, which on a per-frame loop
+      // quickly exhausts the WASM heap on mobile).
+      const total = contours.size();
+      const areas = new Array(total);
+      const idx = new Array(total);
+      for (let i = 0; i < total; i++) {
+        const tmp = contours.get(i);
+        areas[i] = cv.contourArea(tmp);
+        tmp.delete();
+        idx[i] = i;
+      }
+      idx.sort((a, b) => areas[b] - areas[a]);
+      const limit = Math.min(total, 25);
+
+      for (let j = 0; j < limit; j++) {
+        const i = idx[j];
         const c = contours.get(i);
         const area = cv.contourArea(c);
         const frac = area / frameArea;

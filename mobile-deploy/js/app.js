@@ -81,14 +81,33 @@
     }
     quadEl.classList.remove('is-hidden');
     const fw = metrics.frameW, fh = metrics.frameH;
-    // Map analysis-frame pixel coords -> viewBox 0..100 space (object-fit: cover
-    // means the analysis frame and the displayed video share the same aspect box).
-    const pts = metrics.quad.map(p => `${(p.x / fw) * 100},${(p.y / fh) * 100}`).join(' ');
+
+    // The <video> is rendered with `object-fit: cover`, so the preview is
+    // scaled to FILL its box and the overflowing axis is cropped equally on
+    // both sides. The analysis frame, in contrast, contains the WHOLE video
+    // frame (letterbox-free, same aspect as the intrinsic video). Mapping
+    // analysis-frame coords directly to a 0..100 viewBox therefore put the
+    // outline in the wrong place whenever the preview box aspect differed
+    // from the sheet-detection frame aspect (i.e. almost always on a phone in
+    // portrait) - the polygon floated off the actual sheet. Reproduce the
+    // exact `cover` transform here so the drawn quad lands on the real sheet.
+    const video = $('#video');
+    const cw = video.clientWidth || fw;
+    const ch = video.clientHeight || fh;
+    const coverScale = Math.max(cw / fw, ch / fh);
+    const dispW = fw * coverScale, dispH = fh * coverScale;
+    const offX = (dispW - cw) / 2, offY = (dispH - ch) / 2;
+    const toView = (p) => ({
+      x: ((p.x * coverScale - offX) / cw) * 100,
+      y: ((p.y * coverScale - offY) / ch) * 100,
+    });
+
+    const pts = metrics.quad.map(p => { const v = toView(p); return `${v.x},${v.y}`; }).join(' ');
     quadEl.setAttribute('points', pts);
     quadEl.dataset.state = verdict.state === 'ready' ? 'ready' : (verdict.state === 'error' ? 'error' : 'warn');
 
     cornersEl.innerHTML = metrics.quad.map(p => {
-      const x = (p.x / fw) * 100, y = (p.y / fh) * 100;
+      const { x, y } = toView(p);
       return `<line class="hud-corner-tick" x1="${x - 3}" y1="${y}" x2="${x + 3}" y2="${y}" />
               <line class="hud-corner-tick" x1="${x}" y1="${y - 3}" x2="${x}" y2="${y + 3}" />`;
     }).join('');
@@ -138,6 +157,14 @@
       const captureCanvas = $('#canvas-capture');
       const cam = new OMRCapture.CameraSession(video, analyzeCanvas, captureCanvas);
 
+      // Once the live preview is attached, tell the user the vision engine is
+      // still loading so a slow OpenCV download doesn't look like a freeze.
+      cam.onPreviewReady = () => {
+        if (myToken !== state.cameraToken) return;
+        $('#status-text').textContent = 'Loading scanner…';
+        $('#status-detail').textContent = 'Preparing the vision engine, please hold steady.';
+      };
+
       try {
         await cam.start();
       } catch (e) {
@@ -145,7 +172,11 @@
         $('#status-text').textContent = 'Camera access failed';
         const msg = e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError'
           ? 'Camera permission denied — tap the camera icon in your browser address bar and allow access, then try again.'
-          : (e.message || String(e));
+          : (e.name === 'NotFoundError'
+            ? 'No camera found on this device.'
+            : (e.name === 'NotReadableError'
+              ? 'The camera is in use by another app — close other camera apps and try again.'
+              : (e.message || String(e))));
         $('#status-detail').textContent = msg;
         $('#status-banner').dataset.state = 'error';
         return;
@@ -388,4 +419,69 @@
   $('#btn-new-session').addEventListener('click', startNewSession);
 
   loadConfig();
+
+  // ---------------- auto-start ----------------
+  // The product spec requires the camera to come up automatically as soon as
+  // the page loads (Adobe Scan / CamScanner style) instead of forcing the
+  // user to tap "Open Camera" first. We attempt that here.
+  //
+  // Cross-browser caveat: Chrome/Edge/Firefox happily call getUserMedia()
+  // during page load and simply raise the OS/browser permission prompt.
+  // Some engines (notably iOS Safari) require a real user gesture and will
+  // reject an unprompted getUserMedia() with NotAllowedError/SecurityError.
+  // openCamera() already renders a clear, actionable error banner on the
+  // camera view in that case, but a first-load user who never asked for the
+  // camera is better served by the home screen and its explicit button, so
+  // we detect the "gesture required" rejection and fall back home instead of
+  // leaving them staring at an error. A getUserMedia() that succeeds, or that
+  // fails for any other reason (no camera, camera busy, permanently denied),
+  // keeps the informative camera-view messaging.
+  function autoStartCamera() {
+    // Only auto-start from the initial/home view and only in a secure context
+    // where getUserMedia is available at all (avoids a guaranteed failure on
+    // http:// origins where the API is undefined).
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    if (!views.home.classList.contains('is-active')) return;
+
+    const fallbackHome = () => {
+      if (state.cameraToken !== 0) return; // user already interacted; don't override
+      if (state.camera) return;            // a stream is live; nothing to fall back from
+      showView('home');
+      $('#status-banner').dataset.state = 'searching';
+    };
+
+    // Probe permission first (where supported) so we only auto-open when it
+    // won't surprise the user with a rejection we then have to recover from.
+    const attempt = () => openCamera().catch(() => {});
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'camera' })
+        .then((status) => {
+          if (status.state === 'denied') { showView('home'); return; }
+          attempt();
+        })
+        .catch(attempt); // permission probe unsupported for 'camera' — just try
+    } else {
+      attempt();
+    }
+
+    // If openCamera surfaced a gesture-required rejection on the camera view,
+    // pull the user back to the home screen where the button awaits.
+    const banner = $('#status-banner');
+    const observer = new MutationObserver(() => {
+      if (banner.dataset.state === 'error'
+          && /permission denied|allow access/i.test($('#status-detail').textContent || '')
+          && !state.camera) {
+        fallbackHome();
+        observer.disconnect();
+      }
+    });
+    observer.observe(banner, { attributes: true, attributeFilter: ['data-state'] });
+    setTimeout(() => observer.disconnect(), 8000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', autoStartCamera, { once: true });
+  } else {
+    autoStartCamera();
+  }
 })();

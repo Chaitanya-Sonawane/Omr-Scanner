@@ -97,6 +97,16 @@ const OMRCapture = (() => {
         },
       };
 
+      // Guard against ancient / non-HTTPS contexts where the API is missing
+      // entirely. On such origins getUserMedia is undefined and the old code
+      // would throw a confusing TypeError that surfaced as a permanent
+      // "Starting camera…" hang.
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const err = new Error('Camera API unavailable — open this page over HTTPS in Chrome/Safari (in-app browsers often block the camera).');
+        err.name = 'NotSupportedError';
+        throw err;
+      }
+
       // Attempt with high-res first; fall back to a basic constraint set
       // if the device rejects the ideal resolutions (some Android WebViews do).
       let stream;
@@ -108,9 +118,13 @@ const OMRCapture = (() => {
         stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' } } });
       }
 
-      // Load OpenCV in parallel while the video preview is already running.
-      const cv = await loadOpenCV();
-      this.cv = cv;
+      // Show the live preview IMMEDIATELY, before loading OpenCV. OpenCV.js
+      // is a ~10 MB WASM bundle; on a mobile connection awaiting it BEFORE
+      // attaching the stream left the page frozen on "Starting camera…" for
+      // many seconds (or until the 30 s load-timeout), which is exactly the
+      // "camera never starts" symptom. Attaching the stream first means the
+      // user sees themselves right away; OpenCV then finishes loading in the
+      // background before the analysis loop begins.
       this.stream = stream;
       this.video.srcObject = this.stream;
       await new Promise(res => {
@@ -118,6 +132,12 @@ const OMRCapture = (() => {
         else this.video.onloadedmetadata = () => res();
       });
       await this.video.play();
+
+      if (typeof this.onPreviewReady === 'function') this.onPreviewReady();
+
+      // Now load OpenCV (preview is already live on screen).
+      const cv = await loadOpenCV();
+      this.cv = cv;
 
       this.track = this.stream.getVideoTracks()[0];
       if ('ImageCapture' in window) {

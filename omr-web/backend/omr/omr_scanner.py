@@ -14,11 +14,45 @@ Features:
 import cv2
 import numpy as np
 import json
+import os
 import sys
 from typing import Tuple, Dict, Optional, List
 
 # Debug logging
 DEBUG_ENABLED = False
+
+# --- Template-based reader dependencies -------------------------------
+# The template-based reader (detect_bubbles) warps every photo into a
+# fixed canonical space (align.py) and then samples 160 fixed bubble
+# positions from template.json. This is far more reliable than blind
+# HoughCircle+k-means grid guessing (kept below as _detect_bubbles_legacy
+# and used only if alignment fails), because the bubble grid no longer has
+# to be re-discovered from scratch on every (possibly heavily filled)
+# sheet - only the outer border does.
+_MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+_TEMPLATE_PATH = os.path.join(_MODULE_DIR, "template.json")
+
+try:
+    from .align import align_sheet, load_image, CANON_W, CANON_H
+except Exception:  # pragma: no cover - direct-script / non-package execution
+    sys.path.insert(0, _MODULE_DIR)
+    try:
+        from align import align_sheet, load_image, CANON_W, CANON_H  # type: ignore
+    except Exception:
+        align_sheet = None  # type: ignore
+        load_image = None  # type: ignore
+        CANON_W, CANON_H = 1400, 2200
+
+_TEMPLATE_CACHE = None
+
+
+def _load_template():
+    """Load and cache template.json (160 bubble coords in canonical space)."""
+    global _TEMPLATE_CACHE
+    if _TEMPLATE_CACHE is None:
+        with open(_TEMPLATE_PATH) as f:
+            _TEMPLATE_CACHE = json.load(f)
+    return _TEMPLATE_CACHE
 
 def log(msg: str):
     """Debug logging function"""
@@ -245,10 +279,171 @@ def _auto_rotate_image(img, gray):
     return img, gray
 
 
+# ---------------------------------------------------------------------
+# Template-based reader (PRIMARY). Aligns the sheet to canonical space,
+# then reads 160 fixed bubble positions with a small local darkest-disk
+# search that absorbs residual perspective/scale drift, and decides each
+# question by RELATIVE darkness (the marked bubble is much darker than its
+# 3 siblings) rather than a brittle global cut.
+# ---------------------------------------------------------------------
+N_QUESTIONS = 40
+N_OPTIONS = 4
+
+# Reading tunables (canonical space, darkness measured as 255-mean on the
+# illumination-normalised warp, so 0 == paper-white, high == solid mark).
+_MIN_FILL_DARK = 48.0        # a bubble must be at least this dark to count as a mark
+_STRONG_FILL_DARK = 82.0     # unambiguously filled regardless of siblings
+_REL_MARGIN = 20.0           # darkest must beat the mean of the other 3 by this
+_MIN_GAP = 9.0               # darkest must beat the 2nd darkest by this
+_MULTI_GAP = 9.0             # 2nd bubble this close to darkest -> possible double mark
+
+
+def _normalise_illumination(warped_bgr):
+    """Flatten uneven phone-camera lighting so a fixed darkness scale is
+    meaningful across the whole sheet (divide by a heavily-blurred copy)."""
+    gray = cv2.cvtColor(warped_bgr, cv2.COLOR_BGR2GRAY)
+    bg = cv2.GaussianBlur(gray, (0, 0), sigmaX=40)
+    norm = cv2.divide(gray.astype(np.float32), bg.astype(np.float32) + 1e-6) * 160.0
+    return np.clip(norm, 0, 255).astype(np.uint8)
+
+
+def _best_darkness(norm, cx, cy, sample_r, search, mask):
+    """Darkness of the darkest disk found within +/-search px of (cx,cy).
+    The local search absorbs the small residual drift left after the
+    perspective warp, so a slightly mis-located template point still lands
+    on the real bubble. Returns (darkness, x, y)."""
+    h, w = norm.shape
+    best_d, bx, by = -1.0, cx, cy
+    for dy in range(-search, search + 1, 3):
+        y = cy + dy
+        if y - sample_r < 0 or y + sample_r + 1 > h:
+            continue
+        for dx in range(-search, search + 1, 3):
+            x = cx + dx
+            if x - sample_r < 0 or x + sample_r + 1 > w:
+                continue
+            patch = norm[y - sample_r:y + sample_r + 1, x - sample_r:x + sample_r + 1]
+            vals = patch[mask == 255]
+            d = 255.0 - float(vals.mean())
+            if d > best_d:
+                best_d, bx, by = d, x, y
+    return best_d, bx, by
+
+
 def detect_bubbles(img_path, debug_out=None):
     """
-    Main detection function with advanced preprocessing and robust thresholding.
-    
+    Main detection function.
+
+    PRIMARY path: perspective-align the photographed sheet into a fixed
+    canonical space and read the 160 template bubble positions. Falls back
+    to the legacy HoughCircle+k-means detector only if alignment machinery
+    is unavailable or the warp is clearly untrustworthy.
+
+    Returns:
+        answers: Dict[int, Optional[int]] - question -> selected option (1-4) or None
+        flags: Dict[int, str] - questions with detection warnings
+        results: Dict[int, Dict[int, float]] - per-bubble mean intensity (low == dark)
+        confidence_scores: Dict[int, int] - 0-100 confidence per question
+    """
+    if align_sheet is None or load_image is None:
+        return _detect_bubbles_legacy(img_path, debug_out)
+
+    try:
+        tmpl = _load_template()
+        img = load_image(img_path)
+        warped, quality = align_sheet(img, out_size=(CANON_W, CANON_H))
+    except Exception as e:
+        log(f"Template align failed ({e}); using legacy detector")
+        return _detect_bubbles_legacy(img_path, debug_out)
+
+    # An untrustworthy border (whole-frame fallback) means the template
+    # coordinates cannot be trusted; the legacy self-calibrating detector
+    # copes better with an un-warped raw photo in that case.
+    if quality.get("border_method") == "full_frame_fallback":
+        log("Alignment fell back to full frame; using legacy detector")
+        return _detect_bubbles_legacy(img_path, debug_out)
+
+    radius = int(tmpl.get("radius", 35))
+    sample_r = max(4, int(radius * 0.62))
+    search = max(4, int(radius * 0.6))
+    mask = np.zeros((2 * sample_r + 1, 2 * sample_r + 1), np.uint8)
+    cv2.circle(mask, (sample_r, sample_r), sample_r, 255, -1)
+
+    norm = _normalise_illumination(warped)
+    bubbles = tmpl["bubbles"]
+
+    # Sample every bubble (darkness + refined centre).
+    dark = {}       # (q,o) -> darkness
+    centre = {}     # (q,o) -> (x,y)
+    for q in range(1, N_QUESTIONS + 1):
+        for o in range(1, N_OPTIONS + 1):
+            b = bubbles[f"{q}_{o}"]
+            cx, cy = int(round(b["x"])), int(round(b["y"]))
+            d, bx, by = _best_darkness(norm, cx, cy, sample_r, search, mask)
+            dark[(q, o)] = d
+            centre[(q, o)] = (bx, by)
+
+    answers: Dict[int, Optional[int]] = {}
+    flags: Dict[int, str] = {}
+    results: Dict[int, Dict[int, float]] = {}
+    confidence_scores: Dict[int, int] = {}
+
+    for q in range(1, N_QUESTIONS + 1):
+        opt_d = [(dark[(q, o)], o) for o in range(1, N_OPTIONS + 1)]
+        # store mean intensity (255 - darkness) for API /raw compatibility
+        results[q] = {o: max(0.0, 255.0 - dark[(q, o)]) for o in range(1, N_OPTIONS + 1)}
+
+        opt_d.sort(reverse=True)
+        d1, o1 = opt_d[0]
+        d2, o2 = opt_d[1]
+        others_mean = float(np.mean([opt_d[1][0], opt_d[2][0], opt_d[3][0]]))
+        gap = d1 - d2
+
+        strong = d1 >= _STRONG_FILL_DARK and gap >= (_MIN_GAP - 3)
+        relative = (d1 >= _MIN_FILL_DARK and (d1 - others_mean) >= _REL_MARGIN and gap >= _MIN_GAP)
+        is_filled = strong or relative
+
+        if is_filled:
+            answers[q] = o1
+            # confidence from how dominant / dark the chosen mark is
+            gap_conf = 45.0 * min(1.0, gap / 45.0)
+            dark_conf = 35.0 * min(1.0, d1 / 140.0)
+            confidence_scores[q] = int(min(100, 20 + gap_conf + dark_conf))
+
+            # possible double-mark: another bubble almost as dark and also a real mark
+            if d2 >= _MIN_FILL_DARK and gap < _MULTI_GAP:
+                flags[q] = "multi_mark"
+                confidence_scores[q] = max(25, confidence_scores[q] - 40)
+            elif confidence_scores[q] < 45:
+                flags[q] = "low_confidence"
+        else:
+            answers[q] = None
+            confidence_scores[q] = 0
+            # everything dark & similar -> smudged/over-filled row worth review
+            if d1 >= _MIN_FILL_DARK and others_mean >= _MIN_FILL_DARK and gap < _MULTI_GAP:
+                flags[q] = "row_smudged"
+
+    if debug_out:
+        dbg = cv2.cvtColor(norm, cv2.COLOR_GRAY2BGR)
+        for q in range(1, N_QUESTIONS + 1):
+            marked = answers.get(q)
+            for o in range(1, N_OPTIONS + 1):
+                x, y = centre[(q, o)]
+                filled = (marked == o)
+                col = (0, 200, 0) if filled else (0, 0, 220)
+                cv2.circle(dbg, (x, y), radius, col, 3 if filled else 1)
+                cv2.putText(dbg, f"{dark[(q, o)]:.0f}", (x - 18, y - radius - 3),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 120, 0), 1, cv2.LINE_AA)
+        cv2.imwrite(debug_out, dbg)
+
+    return answers, flags, results, confidence_scores
+
+
+def _detect_bubbles_legacy(img_path, debug_out=None):
+    """
+    Legacy self-calibrating detector (HoughCircle + k-means grid). Retained
+    as a fallback for when perspective alignment is unavailable/untrusted.
+
     Returns:
         answers: Dict[int, Optional[int]] - Question number -> selected option (1-4) or None
         flags: Dict[int, str] - Questions with detection warnings

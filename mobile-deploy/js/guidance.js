@@ -27,14 +27,21 @@ const OMRGuidance = (() => {
         message: 'Hold steady',
         detail: `motion=${metrics.motion.toFixed(1)}` };
     }
-    if (metrics.areaFrac < CFG.minAreaFrac) {
-      return { ready: false, state: 'warn', code: 'too_far',
-        message: 'Move closer — sheet is too small in frame',
-        detail: `coverage=${(metrics.areaFrac * 100).toFixed(0)}%` };
-    }
     if (metrics.areaFrac > CFG.maxAreaFrac || metrics.clipped) {
       return { ready: false, state: 'warn', code: 'too_close',
         message: 'Move back — corners are getting cut off',
+        detail: `coverage=${(metrics.areaFrac * 100).toFixed(0)}%` };
+    }
+    // Gate on the ideal 70-90% coverage band, not just the loose min/max, so
+    // auto-capture only fires when the sheet fills the frame as required.
+    if (metrics.areaFrac < CFG.idealAreaFrac[0]) {
+      return { ready: false, state: 'warn', code: 'too_far',
+        message: 'Move closer — fill the frame with the sheet',
+        detail: `coverage=${(metrics.areaFrac * 100).toFixed(0)}%` };
+    }
+    if (metrics.areaFrac > CFG.idealAreaFrac[1]) {
+      return { ready: false, state: 'warn', code: 'too_close',
+        message: 'Move back slightly — leave a small margin',
         detail: `coverage=${(metrics.areaFrac * 100).toFixed(0)}%` };
     }
     if (metrics.centerOffsetFrac != null && metrics.centerOffsetFrac > CFG.centerTolFrac) {
