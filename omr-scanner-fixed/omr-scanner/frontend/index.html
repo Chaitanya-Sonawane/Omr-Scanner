@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0a0c0f" />
+<title>OMR Scan · Sheet Capture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ============ HOME ============ -->
+<main id="view-home" class="view view--home is-active">
+  <div class="home-wrap">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="40" height="40">
+          <rect x="6" y="4" width="36" height="40" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <circle cx="16" cy="16" r="3.2" fill="currentColor"/>
+          <circle cx="16" cy="26" r="3.2" fill="none" stroke="currentColor" stroke-width="2.2"/>
+          <circle cx="16" cy="36" r="3.2" fill="none" stroke="currentColor" stroke-width="2.2"/>
+          <line x1="24" y1="16" x2="34" y2="16" stroke="currentColor" stroke-width="2.2"/>
+          <line x1="24" y1="26" x2="34" y2="26" stroke="currentColor" stroke-width="2.2"/>
+          <line x1="24" y1="36" x2="34" y2="36" stroke="currentColor" stroke-width="2.2"/>
+        </svg>
+      </div>
+      <p class="eyebrow">Sheet Capture Instrument</p>
+      <h1>Scan OMR</h1>
+      <p class="home-sub">Aim, hold steady, and the frame captures itself the instant the sheet is sharp, square, and fully in view.</p>
+    </div>
+
+    <button id="btn-start-scan" class="btn btn--primary btn--lg">
+      <span class="btn-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg>
+      </span>
+      Open Camera
+    </button>
+
+    <div class="session-card" id="session-card" hidden>
+      <div class="session-stat">
+        <span class="session-stat-value" id="stat-scanned">0</span>
+        <span class="session-stat-label">Scanned</span>
+      </div>
+      <div class="session-stat">
+        <span class="session-stat-value" id="stat-avgconf">—</span>
+        <span class="session-stat-label">Avg Confidence</span>
+      </div>
+      <div class="session-stat">
+        <span class="session-stat-value" id="stat-retakes">0</span>
+        <span class="session-stat-label">Flagged for Retake</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ============ CAMERA ============ -->
+<section id="view-camera" class="view view--camera">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas-analyze" hidden></canvas>
+  <canvas id="canvas-capture" hidden></canvas>
+
+  <svg id="hud-overlay" class="hud-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <polygon id="hud-quad" points="" class="hud-quad" />
+    <g id="hud-corners"></g>
+  </svg>
+
+  <div class="hud-top">
+    <button id="btn-close-camera" class="icon-btn" aria-label="Close camera">
+      <svg viewBox="0 0 24 24" width="22" height="22"><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </button>
+    <div class="batch-pill" id="batch-pill">
+      <span id="batch-count">0</span> scanned this session
+    </div>
+    <div class="stability-ring" id="stability-ring" aria-hidden="true">
+      <svg viewBox="0 0 44 44">
+        <circle class="ring-track" cx="22" cy="22" r="19"/>
+        <circle class="ring-fill" id="ring-fill" cx="22" cy="22" r="19"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="hud-bottom">
+    <div class="status-banner" id="status-banner" data-state="searching">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span class="status-text" id="status-text">Point the camera at the OMR sheet</span>
+    </div>
+    <p class="status-detail" id="status-detail"></p>
+  </div>
+
+  <div class="capture-flash" id="capture-flash" aria-hidden="true"></div>
+</section>
+
+<!-- ============ PROCESSING ============ -->
+<section id="view-processing" class="view view--processing">
+  <div class="processing-inner">
+    <div class="spinner" aria-hidden="true"></div>
+    <p class="processing-title" id="processing-title">Checking image quality…</p>
+    <p class="processing-sub" id="processing-sub">Validating corners, sharpness and lighting before upload</p>
+  </div>
+</section>
+
+<!-- ============ RESULT ============ -->
+<section id="view-result" class="view view--result">
+  <div class="result-inner">
+    <div class="result-badge" id="result-badge">
+      <svg id="result-icon" viewBox="0 0 24 24" width="30" height="30"></svg>
+    </div>
+    <h2 id="result-title">Scan complete</h2>
+    <p class="result-sub" id="result-sub">Confidence 92% · all questions clean</p>
+
+    <div class="result-metrics">
+      <div class="metric">
+        <span class="metric-value" id="metric-confidence">—</span>
+        <span class="metric-label">Confidence</span>
+      </div>
+      <div class="metric">
+        <span class="metric-value" id="metric-flagged">—</span>
+        <span class="metric-label">Flagged Qs</span>
+      </div>
+      <div class="metric">
+        <span class="metric-value" id="metric-label">—</span>
+        <span class="metric-label">Sheet #</span>
+      </div>
+    </div>
+
+    <div class="result-notes" id="result-notes"></div>
+    <div class="flagged-list" id="flagged-list"></div>
+
+    <div class="result-actions">
+      <button id="btn-retake" class="btn btn--outline">Retake This Sheet</button>
+      <button id="btn-next" class="btn btn--primary">Scan Next Sheet</button>
+    </div>
+    <button id="btn-finish-batch" class="link-btn">Finish batch &amp; view summary</button>
+  </div>
+</section>
+
+<!-- ============ SUMMARY ============ -->
+<section id="view-summary" class="view view--summary">
+  <div class="summary-inner">
+    <p class="eyebrow">Batch Complete</p>
+    <h2>Session Summary</h2>
+    <div class="summary-grid" id="summary-grid"></div>
+    <div class="summary-table-wrap">
+      <table class="summary-table" id="summary-table">
+        <thead><tr><th>#</th><th>Sheet</th><th>Confidence</th><th>Flagged</th><th>Status</th></tr></thead>
+        <tbody id="summary-tbody"></tbody>
+      </table>
+    </div>
+    <button id="btn-new-session" class="btn btn--primary btn--lg">Start New Session</button>
+  </div>
+</section>
+
+<!-- lazily injected: opencv.js -->
+<script src="js/quality.js"></script>
+<script src="js/guidance.js"></script>
+<script src="js/capture.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
