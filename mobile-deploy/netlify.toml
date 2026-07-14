@@ -4,7 +4,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://omr-scanner-backend.onrender.com/api/:splat"
+  to = "https://omr-scanner-1-cmbe.onrender.com/api/:splat"
   status = 200
   force = true
 
@@ -14,3 +14,5 @@
     X-Frame-Options = "SAMEORIGIN"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(*), microphone=()"
+    Feature-Policy = "camera *"
