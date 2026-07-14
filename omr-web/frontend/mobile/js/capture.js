@@ -83,6 +83,7 @@ const OMRCapture = (() => {
     }
 
     async start(facingMode = 'environment') {
+      console.log('[Camera] Starting with facingMode:', facingMode);
       // Try exact rear camera first, fall back to ideal, then any camera
       let stream = null;
       const attempts = [
@@ -93,18 +94,23 @@ const OMRCapture = (() => {
       ];
 
       let lastErr = null;
-      for (const constraints of attempts) {
+      for (let i = 0; i < attempts.length; i++) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log(`[Camera] Attempt ${i + 1}/${attempts.length}`);
+          stream = await navigator.mediaDevices.getUserMedia(attempts[i]);
+          console.log('[Camera] Got stream:', stream.getVideoTracks()[0].label);
           break;
         } catch (e) {
+          console.warn(`[Camera] Attempt ${i + 1} failed:`, e.message);
           lastErr = e;
           stream = null;
         }
       }
       if (!stream) throw lastErr || new Error('Could not access camera');
 
+      console.log('[Camera] Loading OpenCV...');
       const cv = await loadOpenCV();
+      console.log('[Camera] OpenCV loaded');
       this.cv = cv;
       this.stream = stream;
       this.video.srcObject = null; // reset before reassigning
@@ -112,7 +118,7 @@ const OMRCapture = (() => {
 
       await new Promise((res, rej) => {
         const timeout = setTimeout(() => rej(new Error('Video metadata timeout — camera may be blocked')), 8000);
-        const done = () => { clearTimeout(timeout); res(); };
+        const done = () => { clearTimeout(timeout); console.log('[Camera] Metadata loaded'); res(); };
         if (this.video.readyState >= 2) { done(); return; }
         this.video.addEventListener('loadedmetadata', done, { once: true });
         this.video.addEventListener('error', (e) => { clearTimeout(timeout); rej(e); }, { once: true });
@@ -120,6 +126,7 @@ const OMRCapture = (() => {
 
       try {
         await this.video.play();
+        console.log('[Camera] Video playing');
       } catch (e) {
         // Some browsers auto-play without explicit call — ignore NotAllowedError if already playing
         if (this.video.paused) throw e;
