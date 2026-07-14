@@ -115,9 +115,17 @@
 
   function setStatus(verdict) {
     const banner = $('#status-banner');
-    banner.dataset.state = verdict.state === 'ready' ? 'ready' : (verdict.code === 'not_found' ? 'searching' : 'warn');
+    const state = verdict.state === 'ready' ? 'ready' : (verdict.code === 'not_found' ? 'searching' : 'warn');
+    banner.dataset.state = state;
     $('#status-text').textContent = verdict.message;
     $('#status-detail').textContent = verdict.detail || '';
+
+    // Drive the fixed corner alignment guide: it beams RED until the sheet
+    // is correctly aligned (verdict.ready == template aspect + all backend
+    // quality gates satisfied), then GREEN right before the frame
+    // auto-captures itself. Any non-ready verdict keeps it red.
+    const frame = $('#align-frame');
+    if (frame) frame.dataset.state = verdict.ready ? 'ready' : (state === 'searching' ? 'searching' : 'warn');
   }
 
   function setRing(progress) {
@@ -148,6 +156,7 @@
       showView('camera');
       $('#status-text').textContent = 'Starting camera…';
       $('#status-banner').dataset.state = 'searching';
+      $('#align-frame').dataset.state = 'searching'; // start with red corner beams
       $('#batch-count').textContent = state.sheetsScanned;
 
       try { await ensureSession(); } catch (e) { console.warn('Session init failed, proceeding without session_id:', e); }

@@ -71,6 +71,16 @@
     <g id="hud-corners"></g>
   </svg>
 
+  <!-- Fixed alignment guide: four corner brackets that beam RED until the
+       sheet is correctly aligned (matches template aspect + backend gate),
+       then turn GREEN just before the frame auto-captures itself. -->
+  <div class="align-frame" id="align-frame" data-state="searching" aria-hidden="true">
+    <span class="align-corner align-corner--tl"></span>
+    <span class="align-corner align-corner--tr"></span>
+    <span class="align-corner align-corner--bl"></span>
+    <span class="align-corner align-corner--br"></span>
+  </div>
+
   <div class="hud-top">
     <button id="btn-close-camera" class="icon-btn" aria-label="Close camera">
       <svg viewBox="0 0 24 24" width="22" height="22"><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
