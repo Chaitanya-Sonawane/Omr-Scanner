@@ -717,8 +717,111 @@ def grid_correct(gray, template):
         # complete reference span.
         return full or data_only
 
+    def _piecewise_rows(detected_arr, coarse_a, coarse_b, tol=15.0):
+        """Build a PIECEWISE row mapping by matching each reference row
+        line to the nearest detected line (within `tol` px of where the
+        coarse linear fit predicts it). Real sheets photographed with a
+        phone routinely have page curl: row spacing is NOT uniform down
+        the page, so even a perfect linear fit leaves the bottom rows a
+        half-cell off - which turns genuine single marks into MULTI/BLANK
+        misreads. A per-line piecewise-linear interpolation follows the
+        actual local spacing instead. Extra (spurious) detected lines are
+        naturally ignored because matching is ref->nearest-detected, and
+        missing lines simply fall back to the coarse fit's prediction for
+        that segment. Returns (row_map, n_matched) or (None, 0)."""
+        if len(detected_arr) < 4:
+            return None, 0
+        det = np.sort(np.asarray(detected_arr, dtype=np.float64))
+        ref_pts, det_pts = [], []
+        for r in ref_rows_arr:
+            pred = coarse_a * r + coarse_b
+            j = int(np.argmin(np.abs(det - pred)))
+            if abs(det[j] - pred) <= tol:
+                ref_pts.append(float(r))
+                det_pts.append(float(det[j]))
+        # Require a healthy majority of lines matched, and monotonicity
+        # (two ref lines locking onto the same/crossed detected lines
+        # would mean the match is unreliable).
+        if len(ref_pts) < max(4, int(0.6 * len(ref_rows_arr))):
+            return None, 0
+        if np.any(np.diff(det_pts) <= 0):
+            return None, 0
+        ref_np, det_np = np.array(ref_pts), np.array(det_pts)
+
+        def row_map(y, ref_np=ref_np, det_np=det_np, a=coarse_a, b=coarse_b):
+            if y < ref_np[0] or y > ref_np[-1]:
+                return a * y + b
+            return float(np.interp(y, ref_np, det_np))
+
+        return row_map, len(ref_pts)
+
+    def _window_match_rows(detected_arr):
+        """Layout-independent data-row matcher. Some sheets in the field
+        are printed from a slightly different master (taller title block,
+        tighter row pitch) than the calibration reference: their 20 data
+        rows occupy a different vertical band and pitch, so BOTH the
+        header-anchored linear fit and the nearest-line matcher above can
+        be off by up to a full row at the bottom of the page - which is
+        exactly where MULTI/BLANK misreads pile up. The one invariant
+        across variants is the STRUCTURE of the data block: 21 nearly
+        uniformly spaced horizontal lines bounding the 20 answer rows.
+        So slide a 21-line window over the detected lines and pick the
+        window whose gap-to-gap pattern best matches the reference data
+        rows (constant scale, low variance). Returns (row_map, n_matched)
+        or (None, 0)."""
+        ref_data = ref_rows_arr[HEADER_ROWS:]
+        n_need = len(ref_data)
+        det = np.sort(np.asarray(detected_arr, dtype=np.float64))
+        if len(det) < n_need:
+            return None, 0
+        ref_gaps = np.diff(ref_data)
+        best = None  # (spread, scale, window)
+        for s in range(0, len(det) - n_need + 1):
+            win = det[s:s + n_need]
+            # ANCHOR: the border-based warp pins the sheet's outer border
+            # to the canonical frame, so the detected line corresponding
+            # to the table's bottom edge must land very near the
+            # reference bottom line. Near-uniform row pitch makes
+            # windows shifted by one line score almost identically on
+            # spacing alone - the bottom anchor is what disambiguates.
+            if abs(win[-1] - ref_data[-1]) > 40.0:
+                continue
+            gaps = np.diff(win)
+            if np.any(gaps <= 0):
+                continue
+            ratios = gaps / ref_gaps
+            scale = float(np.median(ratios))
+            if not (0.80 <= scale <= 1.20):
+                continue
+            resid = np.sort(np.abs(ratios - scale)) / max(scale, 1e-6)
+            worst, trimmed = float(resid[-1]), float(resid[-2])
+            # Robust consistency: every gap but one must scale tightly;
+            # allow a single outlier gap (e.g. the taller bottom row on
+            # some masters) a looser bound.
+            if trimmed > 0.08 or worst > 0.25:
+                continue
+            spread = trimmed
+            if best is None or spread < best[0]:
+                best = (spread, scale, win)
+        if best is None:
+            return None, 0
+        _, scale, win = best
+        ref_np, det_np = ref_data.astype(np.float64), win
+
+        def row_map(y, ref_np=ref_np, det_np=det_np, a=scale):
+            if y < ref_np[0]:
+                return det_np[0] + a * (y - ref_np[0])
+            if y > ref_np[-1]:
+                return det_np[-1] + a * (y - ref_np[-1])
+            return float(np.interp(y, ref_np, det_np))
+
+        return row_map, n_need
+
     best_row_fit = None      # (ay, by, is_full)
+    best_row_map = None      # (row_map_callable, n_matched)
+    best_window_map = None   # (row_map_callable, n_matched) - structural match
     best_col_fits = None     # [(ref_lo, ref_hi, ax, bx), ...] per block
+    best_col_map = None      # piecewise x mapping over all column lines
 
     for block_size, c_val in PARAM_SWEEP:
         rows, cols = detect_grid_lines(gray, block_size, c_val)
@@ -728,6 +831,25 @@ def grid_correct(gray, template):
         if row_fit is not None:
             if best_row_fit is None or (row_fit[2] and not best_row_fit[2]):
                 best_row_fit = row_fit
+            # Try to upgrade the linear fit to a curvature-following
+            # piecewise mapping using THIS attempt's detected lines.
+            rmap, nmatch = _piecewise_rows(rows_arr, row_fit[0], row_fit[1])
+            if rmap is not None and (best_row_map is None or nmatch > best_row_map[1]):
+                best_row_map = (rmap, nmatch)
+
+        # Layout-independent structural match of the data-row block -
+        # rescues sheets printed from a different master (different
+        # header height / row pitch) where the fits above mis-anchor.
+        if best_window_map is None:
+            wmap, wmatch = _window_match_rows(rows_arr)
+            if wmap is not None:
+                best_window_map = (wmap, wmatch)
+                if best_row_fit is None:
+                    # Derive a serviceable linear fallback from the same
+                    # structural match so grid_correct doesn't bail out.
+                    ref_data = ref_rows_arr[HEADER_ROWS:]
+                    a, b = np.polyfit(ref_data, [wmap(float(r)) for r in ref_data], 1)
+                    best_row_fit = (a, b, False)
 
         # If the standard detector didn't land a full-quality row fit but
         # DID find all the column lines, use those reliable column
@@ -739,6 +861,36 @@ def grid_correct(gray, template):
             if alt_fit is not None:
                 if best_row_fit is None or (alt_fit[2] and not best_row_fit[2]):
                     best_row_fit = alt_fit
+                rmap, nmatch = _piecewise_rows(alt_rows, alt_fit[0], alt_fit[1])
+                if rmap is not None and (best_row_map is None or nmatch > best_row_map[1]):
+                    best_row_map = (rmap, nmatch)
+
+        if best_col_map is None and len(cols) == n_cols:
+            # Same idea as the piecewise row map, applied horizontally: a
+            # per-block LINEAR fit can still leave several pixels of x
+            # drift mid-block (lens distortion / page curl), pushing the
+            # sampling circle half-off the printed bubble. With all 11
+            # column lines found, interpolate ref->detected directly.
+            cols_sorted = np.sort(np.asarray(cols, dtype=np.float64))
+            resid_ok = True
+            for lo, hi in col_block_ranges:
+                r_slice = ref_cols_arr[lo:hi]
+                c_slice = cols_sorted[lo:hi]
+                gaps_r, gaps_c = np.diff(r_slice), np.diff(c_slice)
+                if np.any(gaps_c <= 0):
+                    resid_ok = False
+                    break
+                ratios = gaps_c / gaps_r
+                if np.any(ratios < 0.85) or np.any(ratios > 1.15):
+                    resid_ok = False
+                    break
+            if resid_ok:
+                ref_c = ref_cols_arr.astype(np.float64)
+
+                def col_map(x, ref_c=ref_c, det_c=cols_sorted):
+                    return float(np.interp(x, ref_c, det_c))
+
+                best_col_map = col_map
 
         if best_col_fits is None and len(cols) == n_cols:
             cols_arr = np.array(cols)
@@ -762,33 +914,153 @@ def grid_correct(gray, template):
             if blocks_ok:
                 best_col_fits = fits
 
-        # Once rows have a full-quality fit and columns are solved, further
-        # sweeping can't improve on either - stop early.
-        if best_row_fit is not None and best_row_fit[2] and best_col_fits is not None:
+        # Once rows have a full-quality fit, a full piecewise line match,
+        # and columns are solved, further sweeping can't improve - stop.
+        if (best_row_fit is not None and best_row_fit[2] and best_col_fits is not None
+                and best_row_map is not None and best_row_map[1] == n_rows):
             break
 
-    if best_row_fit is None or best_col_fits is None:
+    # The structural (window) match validates every single row gap against
+    # the reference pattern, so it's more trustworthy than a PARTIAL
+    # nearest-line match (whose coarse-fit anchor may itself be what's
+    # wrong on a different-master sheet). Only a COMPLETE nearest-line
+    # match of all reference lines outranks it.
+    if best_window_map is not None and (best_row_map is None or best_row_map[1] < n_rows):
+        best_row_map = best_window_map
+
+    if best_row_fit is None or (best_col_fits is None and best_col_map is None):
         return (lambda x, y: (x, y)), False
 
     ay, by, _row_full = best_row_fit
     col_fits = best_col_fits
+    # Prefer the piecewise (curvature-following) row mapping when enough
+    # individual lines were matched; otherwise keep the linear fit.
+    row_map = best_row_map[0] if best_row_map is not None else (lambda y: ay * y + by)
 
-    def correct_xy(x, y, ay=ay, by=by, col_fits=col_fits):
+    col_map = best_col_map
+
+    def correct_xy(x, y, ay=ay, by=by, col_fits=col_fits, row_map=row_map, col_map=col_map):
+        if col_map is not None:
+            return col_map(x), row_map(y)
         # Bubble template x-coordinates are column CENTRES, so they
         # always fall strictly inside exactly one block's reference
         # span - pick that block's own fit rather than a global one.
         for lo_ref, hi_ref, ax, bx in col_fits:
             if lo_ref - 1e-3 <= x <= hi_ref + 1e-3:
-                return ax * x + bx, ay * y + by
+                return ax * x + bx, row_map(y)
         # Defensive fallback (shouldn't trigger for a valid template):
         # nearest block by distance from its reference span.
         ax, bx = min(
             col_fits,
             key=lambda f: min(abs(x - f[0]), abs(x - f[1])),
         )[2:4]
-        return ax * x + bx, ay * y + by
+        return ax * x + bx, row_map(y)
 
     return correct_xy, True
+
+
+def refine_row_positions(gray, corrected_bubbles, radius, dy_range=10, dx_range=5):
+    """
+    Final per-question local snap: even after the border warp + gridline
+    correction, a couple of pixels of residual drift can remain (page
+    curl between two grid lines, local lens distortion, a slightly soft
+    border). The printed bubble OUTLINES are always visible - filled or
+    not - so for each question row, search a small window of shared
+    (dy, dx) shifts for the offset that maximizes the summed darkness of
+    a thin ring at the printed radius across all 4 of that question's
+    options. The shift is shared by the whole row (never fit per-bubble),
+    so an actual ink fill can't drag its own bubble off-centre relative
+    to its blank siblings and bias the classification.
+
+    Mutates/returns a new dict of refined centers.
+    """
+    H, W = gray.shape
+    darkness = 255.0 - gray.astype(np.float32)
+    r_in = max(2, int(round(radius * 0.75)))
+    r_out = max(r_in + 2, int(round(radius * 1.15)))
+    # Pre-build the ring mask once.
+    size = 2 * r_out + 1
+    yy, xx = np.mgrid[0:size, 0:size] - r_out
+    dist2 = xx * xx + yy * yy
+    ring = ((dist2 <= r_out * r_out) & (dist2 >= r_in * r_in)).astype(np.float32)
+
+    refined = {}
+    for q in range(1, N_QUESTIONS + 1):
+        keys = [f"{q}_{opt}" for opt in range(1, N_OPTIONS + 1)]
+        centers = [(int(round(corrected_bubbles[k]["x"])), int(round(corrected_bubbles[k]["y"]))) for k in keys]
+        best_score, best_dy, best_dx = -1.0, 0, 0
+        for dy in range(-dy_range, dy_range + 1):
+            for dx in range(-dx_range, dx_range + 1):
+                score = 0.0
+                ok = True
+                for (cx, cy) in centers:
+                    x0, y0 = cx + dx - r_out, cy + dy - r_out
+                    x1, y1 = x0 + size, y0 + size
+                    if x0 < 0 or y0 < 0 or x1 > W or y1 > H:
+                        ok = False
+                        break
+                    score += float((darkness[y0:y1, x0:x1] * ring).sum())
+                if ok and score > best_score:
+                    best_score, best_dy, best_dx = score, dy, dx
+        for k, (cx, cy) in zip(keys, centers):
+            refined[k] = {"x": cx + best_dx, "y": cy + best_dy}
+    return refined
+
+
+def refine_to_table(warped, template):
+    """
+    Second-stage geometric refinement. align_sheet warps whatever outer
+    boundary it finds - on photos that include the whole page (title
+    block, margins) it locks onto the PAGE outline, not the answer
+    TABLE, so the table ends up smaller/offset inside the canvas and
+    every template coordinate is wrong; grid_correct can't rescue that
+    because hardly any of its expected lines exist where it looks.
+
+    Here we look INSIDE the already-warped page for the answer table
+    itself: the largest 4-corner contour occupying a substantial (but
+    not near-total) fraction of the canvas. If found, re-warp so the
+    table fills the canvas exactly like the calibration reference.
+    Returns (warped, True) with the refined image, or the original
+    (warped, False) when no confident table quad exists (already
+    table-cropped photos land here - by design).
+    """
+    H, W = warped.shape[:2]
+    g = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    th = cv2.adaptiveThreshold(
+        g, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 45, 15
+    )
+    # Bridge small breaks in the printed border so it forms one contour.
+    th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    contours, _ = cv2.findContours(th, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    best_quad, best_area = None, 0.0
+    for c in contours:
+        area = cv2.contourArea(c)
+        frac = area / float(W * H)
+        # Table smaller than half the page = probably a cell block, not
+        # the table; larger than ~93% = the warp already fits the table.
+        if frac < 0.45 or frac > 0.93:
+            continue
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        if len(approx) != 4 or not cv2.isContourConvex(approx):
+            hull = cv2.convexHull(c)
+            approx = cv2.approxPolyDP(hull, 0.02 * cv2.arcLength(hull, True), True)
+            if len(approx) != 4:
+                continue
+        if area > best_area:
+            best_area, best_quad = area, approx.reshape(4, 2).astype(np.float32)
+    if best_quad is None:
+        return warped, False
+    # Order corners TL, TR, BR, BL.
+    s = best_quad.sum(axis=1)
+    d = np.diff(best_quad, axis=1).ravel()
+    src = np.array([
+        best_quad[np.argmin(s)], best_quad[np.argmin(d)],
+        best_quad[np.argmax(s)], best_quad[np.argmax(d)],
+    ], dtype=np.float32)
+    dst = np.array([[0, 0], [W - 1, 0], [W - 1, H - 1], [0, H - 1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src, dst)
+    return cv2.warpPerspective(warped, M, (W, H)), True
 
 
 def scan_sheet(image_path, template, debug_dir=None):
@@ -811,6 +1083,24 @@ def scan_sheet(image_path, template, debug_dir=None):
     # printed gridlines and correct any residual scale/offset drift before
     # sampling - see grid_correct() for why this matters.
     correct_xy, grid_matched = grid_correct(gray, template)
+
+    # 0a. If the gridline check failed, the initial warp most likely
+    # locked onto the PAGE outline instead of the answer TABLE (photos
+    # that include the title block / margins). Try to find the table
+    # inside the warped page, re-warp to it, and re-verify - only keep
+    # the refined warp if the gridlines now actually match.
+    if not grid_matched:
+        refined, found = refine_to_table(warped, template)
+        if found:
+            r_gray = cv2.cvtColor(refined, cv2.COLOR_BGR2GRAY)
+            r_correct_xy, r_matched = grid_correct(r_gray, template)
+            if r_matched:
+                warped, gray = refined, r_gray
+                norm_gray = normalize_illumination(gray)
+                enh_gray, clahe_gray = enhance_for_detection(norm_gray)
+                correct_xy, grid_matched = r_correct_xy, True
+                align_quality = dict(align_quality, border_method=align_quality["border_method"] + "+table_refine")
+
     corrected_bubbles = {
         key: dict(zip(("x", "y"), correct_xy(c["x"], c["y"])))
         for key, c in template["bubbles"].items()
