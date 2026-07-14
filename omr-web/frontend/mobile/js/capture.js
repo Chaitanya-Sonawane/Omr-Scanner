@@ -42,19 +42,27 @@ const OMRCapture = (() => {
     if (cvReadyPromise) return cvReadyPromise;
     cvReadyPromise = new Promise((resolve, reject) => {
       if (window.cv && window.cv.Mat) { resolve(window.cv); return; }
+
+      const timeout = setTimeout(() => {
+        reject(new Error('OpenCV.js took too long to initialise — check network connectivity'));
+      }, 20000);
+
+      const finish = (result) => { clearTimeout(timeout); resolve(result); };
+      const fail = (err) => { clearTimeout(timeout); reject(err); };
+
       const script = document.createElement('script');
       script.src = 'https://docs.opencv.org/4.9.0/opencv.js';
       script.async = true;
       script.onload = () => {
         const check = () => {
           if (window.cv && (window.cv.Mat || window.cv.onRuntimeInitialized)) {
-            if (window.cv.Mat) resolve(window.cv);
-            else window.cv.onRuntimeInitialized = () => resolve(window.cv);
+            if (window.cv.Mat) finish(window.cv);
+            else window.cv.onRuntimeInitialized = () => finish(window.cv);
           } else setTimeout(check, 30);
         };
         check();
       };
-      script.onerror = () => reject(new Error('Failed to load OpenCV.js — check network connectivity'));
+      script.onerror = () => fail(new Error('Failed to load OpenCV.js — check network connectivity'));
       document.head.appendChild(script);
     });
     return cvReadyPromise;
@@ -74,25 +82,51 @@ const OMRCapture = (() => {
       this.stopped = true;
     }
 
-    async start() {
-      this.cv = await loadOpenCV();
+    async start(facingMode = 'environment') {
+      // Try exact rear camera first, fall back to ideal, then any camera
+      let stream = null;
+      const attempts = [
+        { audio: false, video: { facingMode: { exact: facingMode }, width: { ideal: 3840 }, height: { ideal: 2160 } } },
+        { audio: false, video: { facingMode: { ideal: facingMode }, width: { ideal: 3840 }, height: { ideal: 2160 } } },
+        { audio: false, video: { facingMode: { ideal: facingMode } } },
+        { audio: false, video: true },
+      ];
 
-      const constraints = {
-        audio: false,
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 3840 },
-          height: { ideal: 2160 },
-          advanced: [{ focusMode: 'continuous' }],
-        },
-      };
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let lastErr = null;
+      for (const constraints of attempts) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch (e) {
+          lastErr = e;
+          stream = null;
+        }
+      }
+      if (!stream) throw lastErr || new Error('Could not access camera');
+
+      const cv = await loadOpenCV();
+      this.cv = cv;
+      this.stream = stream;
+      this.video.srcObject = null; // reset before reassigning
       this.video.srcObject = this.stream;
-      await new Promise(res => {
-        if (this.video.readyState >= 2) res();
-        else this.video.onloadedmetadata = () => res();
+
+      await new Promise((res, rej) => {
+        const timeout = setTimeout(() => rej(new Error('Video metadata timeout — camera may be blocked')), 8000);
+        const done = () => { clearTimeout(timeout); res(); };
+        if (this.video.readyState >= 2) { done(); return; }
+        this.video.addEventListener('loadedmetadata', done, { once: true });
+        this.video.addEventListener('error', (e) => { clearTimeout(timeout); rej(e); }, { once: true });
       });
-      await this.video.play();
+
+      try {
+        await this.video.play();
+      } catch (e) {
+        // Some browsers auto-play without explicit call — ignore NotAllowedError if already playing
+        if (this.video.paused) throw e;
+      }
+
+      // Give the browser one animation frame to actually render video pixels
+      await new Promise(res => requestAnimationFrame(res));
 
       this.track = this.stream.getVideoTracks()[0];
       if ('ImageCapture' in window) {

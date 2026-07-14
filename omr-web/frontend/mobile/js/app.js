@@ -33,10 +33,12 @@
     cameraToken: 0,        // bumped on every openCamera()/closeCamera() to detect stale async work
   };
 
+  // Track current facing mode so flip button can toggle it
+  let currentFacingMode = 'environment';
+
   // ---------------- config ----------------
   async function loadConfig() {
     try {
-      // Use the API URL from environment or fallback to relative path
       const apiBase = window.VITE_API_URL ? `${window.VITE_API_URL}/api/mobile/config` : '/api/mobile/config';
       const res = await fetch(apiBase);
       const cfg = await res.json();
@@ -48,7 +50,6 @@
     }
   }
 
-  // ---------------- session/stats ----------------
   async function ensureSession() {
     if (state.sessionId) return state.sessionId;
     const apiBase = window.VITE_API_URL ? `${window.VITE_API_URL}/api/mobile/session` : '/api/mobile/session';
@@ -139,7 +140,7 @@
       const cam = new OMRCapture.CameraSession(video, analyzeCanvas, captureCanvas);
 
       try {
-        await cam.start();
+        await cam.start(currentFacingMode);
       } catch (e) {
         if (myToken !== state.cameraToken) { cam.stop(); return; } // superseded while starting
         $('#status-text').textContent = 'Camera access failed';
@@ -379,6 +380,24 @@
   // ---------------- wiring ----------------
   $('#btn-start-scan').addEventListener('click', openCamera);
   $('#btn-close-camera').addEventListener('click', closeCamera);
+  $('#btn-flip-camera').addEventListener('click', () => {
+    currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+    if (state.camera) {
+      // Restart camera with the new facing mode
+      state.cameraToken++;
+      state.camera.stop();
+      state.camera = null;
+      state.stability = null;
+      state.capturing = false;
+      openingCamera = false;
+      openCamera();
+    }
+  });
+  $('#btn-manual-capture').addEventListener('click', () => {
+    if (state.camera && !state.capturing) {
+      triggerCapture(state.camera, state.cameraToken);
+    }
+  });
   $('#btn-retake').addEventListener('click', retakeCurrentSheet);
   $('#btn-next').addEventListener('click', scanNextSheet);
   $('#btn-finish-batch').addEventListener('click', finishBatch);

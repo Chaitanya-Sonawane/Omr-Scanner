@@ -73,6 +73,12 @@
     <div class="batch-pill" id="batch-pill">
       <span id="batch-count">0</span> scanned this session
     </div>
+    <button id="btn-flip-camera" class="icon-btn" aria-label="Flip camera" title="Switch camera">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 4v6h6"/><path d="M23 20v-6h-6"/>
+        <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15"/>
+      </svg>
+    </button>
     <div class="stability-ring" id="stability-ring" aria-hidden="true">
       <svg viewBox="0 0 44 44">
         <circle class="ring-track" cx="22" cy="22" r="19"/>
@@ -87,6 +93,12 @@
       <span class="status-text" id="status-text">Point the camera at the OMR sheet</span>
     </div>
     <p class="status-detail" id="status-detail"></p>
+    <button id="btn-manual-capture" class="btn btn--primary btn--capture" aria-label="Capture sheet manually">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>
+      </svg>
+      Capture
+    </button>
   </div>
 
   <div class="capture-flash" id="capture-flash" aria-hidden="true"></div>
