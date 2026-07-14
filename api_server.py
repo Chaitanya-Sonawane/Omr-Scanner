@@ -143,6 +143,39 @@ async def health():
     return {"status": "ok"}
 
 
+# ── Template / Calibration stubs ──────────────────────────────────────────────
+# The OMR scanner used here is self-calibrating (adaptive grid detection), so
+# no explicit template calibration step is required. These endpoints respond
+# with a "ready" template so the frontend CalibrateZone unlocks immediately.
+
+_DEFAULT_TEMPLATE = {
+    "n_bubbles": 160,
+    "bubbles": 160,
+    "radius": 12,
+    "canon_w": 1400,
+    "canon_h": 2200,
+    "calibrated": False,
+    "note": "Adaptive scanner — no manual calibration required",
+}
+
+@app.get("/api/template")
+async def get_template():
+    """Return template metadata. Always returns the default adaptive-scanner config."""
+    return _DEFAULT_TEMPLATE
+
+
+@app.post("/api/calibrate")
+async def calibrate_template(file: UploadFile = File(...)):
+    """Accept a reference sheet upload and return template metadata.
+    
+    The backend uses an adaptive OMR scanner that auto-detects bubble
+    positions, so this endpoint acknowledges the upload without storing
+    a fixed grid. The response unlocks the frontend for scanning.
+    """
+    # Just acknowledge — no fixed template needed
+    return {**_DEFAULT_TEMPLATE, "calibrated": True, "filename": file.filename}
+
+
 @app.post("/api/session")
 async def create_session():
     """Create a new OMR processing session"""
@@ -322,16 +355,23 @@ async def process_sheets(session_id: str):
                 score = 0
                 total_questions = len(correct_answers)
                 detailed_answers = {}
-                
+
                 for q_num, correct_ans in correct_answers.items():
                     student_ans = student_answers.get(str(q_num), "")
-                    is_correct = student_ans == correct_ans
+                    flag = flags.get(int(q_num)) or flags.get(str(q_num))
+                    if flag == "multi_mark":
+                        marked_display = "MULTI"
+                        is_correct = False
+                    else:
+                        marked_display = student_ans
+                        is_correct = student_ans != "" and student_ans == correct_ans
                     if is_correct:
                         score += 1
                     detailed_answers[q_num] = {
-                        "marked": student_ans,
+                        "marked": marked_display,
                         "correct": correct_ans,
-                        "is_correct": is_correct
+                        "is_correct": is_correct,
+                        "flag": flag or None,
                     }
                 
                 # Calculate confidence (1.0 if no flags, lower if there are issues)
@@ -520,6 +560,7 @@ async def get_detection(session_id: str, sheet_id: str):
             "marked": detail.get("marked", ""),
             "correct": detail.get("correct", ""),
             "is_correct": detail.get("is_correct", False),
+            "flag": detail.get("flag"),
         })
     questions.sort(key=lambda x: x["q_no"])
 

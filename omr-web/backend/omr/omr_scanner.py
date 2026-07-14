@@ -62,7 +62,7 @@ def _detect_circles(gray):
     
     # Stage 1: Standard detection on median-blurred image
     blur = cv2.medianBlur(gray, 5)
-    for param2 in [22, 18, 14, 10]:
+    for param2 in [22, 18, 14, 10, 8]:
         circles = _try_hough(blur, min_r, max_r, param2)
         if circles is not None and len(circles[0]) >= 8:
             return circles, blur
@@ -70,7 +70,7 @@ def _detect_circles(gray):
     # Stage 2: Enhanced preprocessing for difficult images
     enhanced = _preprocess_image(gray)
     blur2 = cv2.medianBlur(enhanced, 5)
-    for param2 in [20, 16, 12]:
+    for param2 in [20, 16, 12, 8]:
         circles = _try_hough(blur2, min_r, max_r, param2)
         if circles is not None and len(circles[0]) >= 8:
             return circles, blur2
@@ -78,10 +78,22 @@ def _detect_circles(gray):
     # Stage 3: Bilateral filter for noise reduction while preserving edges
     bilateral = cv2.bilateralFilter(gray, 9, 75, 75)
     blur3 = cv2.medianBlur(bilateral, 3)
-    for param2 in [18, 14, 10]:
+    for param2 in [18, 14, 10, 7]:
         circles = _try_hough(blur3, min_r, max_r, param2)
         if circles is not None and len(circles[0]) >= 8:
             return circles, blur3
+
+    # Stage 4: Wider radius range + aggressive CLAHE for mobile/WhatsApp photos
+    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+    eq = clahe.apply(gray)
+    _, bw = cv2.threshold(eq, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    blur4 = cv2.medianBlur(bw, 3)
+    r_lo = max(4, r_est - 8)
+    r_hi = r_est + 14
+    for param2 in [15, 10, 7, 5]:
+        circles = _try_hough(blur4, r_lo, r_hi, param2)
+        if circles is not None and len(circles[0]) >= 8:
+            return circles, blur4
     
     return None, blur
 
@@ -280,8 +292,11 @@ def detect_bubbles(img_path, debug_out=None):
     for i in range(1, window):
         gap = ys_all[i] - ys_all[i - 1]
         if gap > 60 and gap > best_gap:
-            best_gap = gap
-            cut_y = ys_all[i]
+            # Only cut if enough circles remain after the cut (at least 60% of total)
+            remaining = sum(1 for y in ys_all if y >= ys_all[i])
+            if remaining >= max(8, n_total * 0.6):
+                best_gap = gap
+                cut_y = ys_all[i]
     if cut_y is not None:
         circles = [c for c in circles if c[1] >= cut_y]
     if len(circles) < 8:

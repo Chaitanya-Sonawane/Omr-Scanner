@@ -17,6 +17,16 @@ function emptyKey() {
   return k
 }
 
+// Normalize answer key to always use q-prefixed keys: {"q1": "A", ...}
+function normalizeAnswers(raw) {
+  const out = {}
+  for (const [k, v] of Object.entries(raw)) {
+    const key = k.startsWith('q') ? k : `q${k}`
+    out[key] = v
+  }
+  return out
+}
+
 export default function AnswerKeyZone({ sessionId, onKeyReady }) {
   const [mode, setMode] = useState('manual') // 'manual' | 'scan'
   const [answers, setAnswers] = useState(emptyKey())
@@ -36,9 +46,10 @@ export default function AnswerKeyZone({ sessionId, onKeyReady }) {
           .then(r => r.ok ? r.json() : null)
           .then(data => {
             if (data?.answers) {
-              setAnswers(data.answers)
+              const normalized = normalizeAnswers(data.answers)
+              setAnswers(normalized)
               setSaved(true)
-              onKeyReady(data.answers)
+              onKeyReady(normalized)
             }
           })
           .catch(() => {}) // Silently fail
@@ -98,7 +109,8 @@ export default function AnswerKeyZone({ sessionId, onKeyReady }) {
     setScanMeta(null)
     try {
       const result = await uploadAnswerKey(sessionId, accepted[0])
-      setAnswers(result.answers)
+      const normalized = normalizeAnswers(result.answers)
+      setAnswers(normalized)
       setSaved(true)
       setHasSaved(true)  // Mark as globally saved
       setScanMeta({
@@ -106,7 +118,7 @@ export default function AnswerKeyZone({ sessionId, onKeyReady }) {
         flagged: result.flagged,
         lowConfidenceQuestions: result.low_confidence_questions || [],
       })
-      onKeyReady(result.answers)
+      onKeyReady(normalized)
     } catch (e) {
       setError(e.response?.data?.detail || 'Scan failed')
     } finally {

@@ -28,13 +28,13 @@ echo "   API Server PID: $API_PID"
 # Wait for API to start
 sleep 3
 
-# Start Next.js frontend
+# Start frontend (Vite/React in omr-web/frontend)
 echo "🎨 Starting Frontend on port 3000..."
-cd omr-scanner-ui-redesign
-npm install
+cd omr-web/frontend
+npm install --silent
 npm run dev &
 FRONTEND_PID=$!
-cd ..
+cd ../..
 
 echo ""
 echo "✅ OMR Scanner System is running!"

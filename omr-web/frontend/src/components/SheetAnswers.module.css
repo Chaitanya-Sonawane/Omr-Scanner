@@ -61,15 +61,34 @@
 .correct { background: var(--green-lt); border-color: var(--green); }
 .wrong   { background: var(--red-lt);   border-color: var(--red); }
 .multi   { background: var(--amber-lt); border-color: var(--amber); }
+.review  { background: #fef9c3;         border-color: #ca8a04; }
 
 .qno { font-size: 9px; color: var(--muted); font-weight: 500; }
 
 .marked { font-size: 17px; font-weight: 700; color: var(--text); }
 .correct .marked { color: var(--green); }
 .wrong .marked   { color: var(--red); }
+.multi .marked   { color: var(--amber); }
 
-.hint { font-size: 9px; color: var(--green); font-weight: 700; }
-.wrong .hint     { color: var(--green); }
+.hint       { font-size: 9px; color: var(--green); font-weight: 700; }
+.wrong .hint { color: var(--green); }
+.hintMulti  { font-size: 8px; color: var(--amber); font-weight: 700; text-transform: uppercase; }
+.hintReview { font-size: 8px; color: #92400e;      font-weight: 700; text-transform: uppercase; }
+
+/* Per-sheet Otsu meta bar */
+.metaBar {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 7px 16px;
+  background: var(--bg);
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.metaBar strong { color: var(--text); }
+.metaWarn  { color: #92400e; font-weight: 600; }
+.metaMulti { color: var(--red); font-weight: 600; }
 
 .loading { padding: 16px; color: var(--muted); text-align: center; font-size: 13px; }
 .error   { padding: 16px; color: var(--red); font-size: 13px; }
