@@ -136,6 +136,162 @@ def _auto_rotate(img: np.ndarray, gray: np.ndarray) -> Tuple[np.ndarray, np.ndar
 
 
 # ---------------------------------------------------------------------------
+# Sheet detection & perspective correction
+# ---------------------------------------------------------------------------
+
+def _order_corners(pts: np.ndarray) -> np.ndarray:
+    """Order 4 points as top-left, top-right, bottom-right, bottom-left."""
+    pts = np.array(pts, dtype=np.float32).reshape(4, 2)
+    s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).ravel()
+    tl = pts[int(np.argmin(s))]
+    br = pts[int(np.argmax(s))]
+    tr = pts[int(np.argmin(d))]
+    bl = pts[int(np.argmax(d))]
+    return np.array([tl, tr, br, bl], dtype=np.float32)
+
+
+def _detect_sheet_quad(gray: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Find the OMR sheet as the largest convex 4-point contour in the frame.
+
+    A phone photo usually contains the sheet on a desk/background; without
+    isolating the sheet first, the downstream bubble grid can never lock on.
+    Returns the 4 corner points (unordered) or None when no sheet-like quad
+    is found (e.g. the image is already a tight scan of the sheet).
+    """
+    h, w = gray.shape
+    img_area = float(h * w)
+
+    proc = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # A phone photo of a (bright) paper sheet on a (darker) desk separates
+    # cleanly with Otsu; edge-only detection tends to break the sheet border
+    # into several segments and miss the quad. We combine a filled-blob mask
+    # (Otsu) with Canny edges so a strong outline is found either way, then
+    # close small gaps so the sheet becomes one solid contour.
+    _, otsu = cv2.threshold(proc, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    edges = cv2.Canny(proc, 50, 150)
+    combined = cv2.bitwise_or(otsu, edges)
+    kernel = np.ones((7, 7), np.uint8)
+    combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    for c in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
+        area = cv2.contourArea(c)
+        # Sheet must dominate the frame but not be the full frame border.
+        if area < img_area * 0.25 or area > img_area * 0.999:
+            continue
+
+        # Work on the convex hull so the sheet's four corners survive even
+        # when the raw contour is jagged or partially broken.
+        hull = cv2.convexHull(c)
+        peri = cv2.arcLength(hull, True)
+        quad = None
+        for eps in (0.02, 0.03, 0.05, 0.08):
+            approx = cv2.approxPolyDP(hull, eps * peri, True)
+            if len(approx) == 4 and cv2.isContourConvex(approx):
+                quad = approx.reshape(4, 2).astype(np.float32)
+                break
+        if quad is None:
+            # Fallback: the minimum-area rotated rectangle enclosing the
+            # sheet. Handles skew/rounded corners that defeat polygon approx.
+            box = cv2.boxPoints(cv2.minAreaRect(c))
+            if cv2.contourArea(box.astype(np.float32)) >= img_area * 0.25:
+                quad = box.astype(np.float32)
+        if quad is not None:
+            return quad
+    return None
+
+
+def _warp_to_sheet(img: np.ndarray,
+                   gray: np.ndarray) -> Tuple[np.ndarray, np.ndarray, bool]:
+    """
+    Detect the sheet quad and apply a four-point perspective transform so the
+    sheet fills the frame flat and deskewed. Both the BGR image and the
+    enhanced grayscale are warped with the same matrix to stay aligned.
+    Falls back to the original images when no sheet is detected.
+    """
+    # Detect on the raw luminance rather than the heavily-enhanced grayscale:
+    # the enhancer's shadow removal / binarisation can erase the sheet-vs-desk
+    # contrast the contour search relies on.
+    detect_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    quad = _detect_sheet_quad(detect_gray)
+    if quad is None:
+        return img, gray, False
+
+    ordered = _order_corners(quad)
+    tl, tr, br, bl = ordered
+    out_w = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
+    out_h = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
+    if out_w < 100 or out_h < 100:
+        return img, gray, False
+
+    dst = np.array([[0, 0], [out_w - 1, 0],
+                    [out_w - 1, out_h - 1], [0, out_h - 1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(ordered, dst)
+    img_w = cv2.warpPerspective(img, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
+    gray_w = cv2.warpPerspective(gray, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
+    _log(f"Sheet detected and warped to {out_w}x{out_h}")
+    return img_w, gray_w, True
+
+
+# ---------------------------------------------------------------------------
+# Ink / filled-pixel map
+# ---------------------------------------------------------------------------
+
+def _build_ink_mask(gray: np.ndarray) -> np.ndarray:
+    """
+    Build a robust binary map of "ink" (filled/dark) pixels for fill-ratio
+    analysis.
+
+    A single global Otsu threshold on a phone photo is fragile: uneven
+    lighting, soft shadows and glare shift the global cut-point, so genuine
+    pencil marks on the dim side of the sheet fall below the threshold while
+    paper on the bright side creeps above it. That directly produces the
+    ``multi_mark`` / ``no_clear_mark`` noise seen on real captures.
+
+    A single global Otsu picks up the solid *interiors* of marks reliably but
+    misses genuine pencil strokes on the dim side of an unevenly-lit sheet. A
+    *local* adaptive threshold (per-neighbourhood mean) tracks lighting
+    gradients and recovers those faint marks, but on its own it hollows out
+    the interior of large uniform blobs (their interior equals the local
+    background). We therefore take the *union* of the two: Otsu supplies the
+    solid interiors, adaptive supplies the faint/shadowed edges. A large block
+    size keeps the adaptive pass from eating into big marks.
+
+    A morphological opening finally removes isolated speckle (dust, print
+    noise, stray graphite) that is too small to be a real mark, so it cannot
+    inflate a bubble's fill ratio.
+
+    Returns a uint8 mask where filled/dark ink == 255.
+    """
+    h, w = gray.shape
+    # Odd block size that scales with sheet size (local neighbourhood used to
+    # estimate the background for each pixel). A generous block keeps the
+    # interior of solidly-filled bubbles intact while still following shadows.
+    block = max(31, (min(h, w) // 12) | 1)
+    adaptive_dark = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV, block, 10,
+    )
+
+    _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    otsu_dark = cv2.bitwise_not(otsu)
+
+    ink = cv2.bitwise_or(adaptive_dark, otsu_dark)
+
+    # Remove dust / speckle noise while keeping solid marks intact.
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    ink = cv2.morphologyEx(ink, cv2.MORPH_OPEN, kernel, iterations=1)
+    return ink
+
+
+# ---------------------------------------------------------------------------
 # Grid construction
 # ---------------------------------------------------------------------------
 
@@ -267,6 +423,13 @@ def detect_bubbles(
 
     # Preprocessed grayscale via enhancer (shadow removal, CLAHE, sharpening, deskew)
     gray = preprocess_for_omr(img_path)
+
+    # Isolate the sheet from the surrounding background (desk/table/hand) and
+    # flatten any perspective before anything else runs. Without this a phone
+    # photo that contains more than just the sheet can never lock onto the
+    # bubble grid. No-op when the image is already a tight scan of the sheet.
+    img, gray, _warped = _warp_to_sheet(img, gray)
+
     img, gray = _auto_rotate(img, gray)
     h, w = gray.shape
 
@@ -318,8 +481,10 @@ def detect_bubbles(
     row_y = _compute_row_y(pts)
     sample_r = max(int(radius_est * 0.60), 6)
 
-    # Otsu binary map for filled-pixel ratio
-    _, gray_otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Lighting-robust ink map for filled-pixel ratio (adaptive threshold AND
+    # Otsu, denoised) — far more reliable than a single global Otsu cut on
+    # phone photos with uneven lighting / shadows / glare.
+    ink_mask = _build_ink_mask(gray)
 
     raw_intensities: Dict[int, Dict[int, float]] = {}
     bubble_details: Dict[int, Dict[int, dict]] = {}
@@ -351,7 +516,7 @@ def detect_bubbles(
                 mean_val = float(cv2.mean(gray, mask=circ_mask)[0])
 
                 dark_px = cv2.countNonZero(
-                    cv2.bitwise_and(cv2.bitwise_not(gray_otsu), circ_mask)
+                    cv2.bitwise_and(ink_mask, circ_mask)
                 )
                 total_px = cv2.countNonZero(circ_mask)
                 fill_ratio = dark_px / (total_px + 1e-9)
