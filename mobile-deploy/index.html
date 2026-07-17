@@ -102,6 +102,14 @@
       <span class="status-text" id="status-text">Point the camera at the OMR sheet</span>
     </div>
     <p class="status-detail" id="status-detail"></p>
+
+    <!-- Manual shutter: lets the user force a capture at any time, so a
+         too-strict auto-capture gate can never leave them permanently
+         stuck on "hold steady". Disabled until the vision engine is ready. -->
+    <button id="btn-capture" class="capture-shutter" aria-label="Capture now" disabled>
+      <span class="capture-shutter-ring" aria-hidden="true"></span>
+      <span class="capture-shutter-label">Capture</span>
+    </button>
   </div>
 
   <div class="capture-flash" id="capture-flash" aria-hidden="true"></div>

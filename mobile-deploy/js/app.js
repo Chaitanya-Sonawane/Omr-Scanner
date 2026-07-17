@@ -279,6 +279,19 @@
       state.capturing = false;
       state.stability = new OMRGuidance.StabilityTracker(() => triggerCapture(cam, myToken));
 
+      // The vision engine (OpenCV) has finished loading and the analysis
+      // loop is about to start — enable the manual shutter so the user can
+      // always force a capture, even if the strict auto-capture gate never
+      // decides the frame is "perfect". Also clear the "Loading scanner…"
+      // banner immediately so it can never look frozen.
+      const captureBtn = $('#btn-capture');
+      if (captureBtn) {
+        captureBtn.disabled = false;
+        captureBtn.onclick = () => triggerCapture(cam, myToken);
+      }
+      $('#status-text').textContent = 'Point the camera at the OMR sheet';
+      $('#status-detail').textContent = 'Tap Capture when the whole sheet is inside the frame.';
+
       cam.onStreamEnded = () => {
         if (myToken !== state.cameraToken) return; // already superseded/closed
         state.capturing = false;
@@ -304,6 +317,8 @@
 
   function closeCamera() {
     state.cameraToken++; // invalidate any in-flight openCamera()/triggerCapture() from this session
+    const captureBtn = $('#btn-capture');
+    if (captureBtn) { captureBtn.disabled = true; captureBtn.onclick = null; }
     if (state.camera) state.camera.stop();
     state.camera = null;
     state.stability = null;
@@ -326,6 +341,10 @@
   async function triggerCapture(cam, token) {
     if (state.capturing || !state.camera || token !== state.cameraToken) return;
     state.capturing = true;
+    // Prevent a double-tap on the manual shutter (or a manual tap racing the
+    // auto-capture) from starting a second capture pipeline.
+    const captureBtn = $('#btn-capture');
+    if (captureBtn) captureBtn.disabled = true;
 
     // Bails out of the async capture pipeline the instant the camera view
     // is no longer the one this capture started from (user hit "close",
@@ -376,6 +395,7 @@
         // Reject locally - never upload a capture we already know is bad.
         state.capturing = false;
         state.stability.reset();
+        if (captureBtn && token === state.cameraToken) captureBtn.disabled = false;
         showView('camera');
         $('#status-banner').dataset.state = 'error';
         $('#status-text').textContent = 'Retake needed: ' + validation.reasons[0];
@@ -409,6 +429,7 @@
       if (stale()) return;
       state.capturing = false;
       if (state.stability) state.stability.reset();
+      if (captureBtn && token === state.cameraToken) captureBtn.disabled = false;
       showView('camera');
       $('#status-banner').dataset.state = 'error';
       $('#status-text').textContent = 'Capture failed — try again';

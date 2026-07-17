@@ -103,6 +103,31 @@
     $('#status-detail').textContent = verdict.detail || '';
   }
 
+  // Build a verdict-shaped object (for drawHud/setStatus) from a
+  // QualityValidationEngine result, so the existing HUD/banner rendering is
+  // unchanged - only the source of the decision moved to the six-check gate.
+  function verdictFromGate(result) {
+    return {
+      ready: result.allPass,
+      state: result.allPass ? 'ready' : (result.cornersOk ? 'warn' : 'searching'),
+      code: result.cornersOk ? 'warn' : 'not_found',
+      message: result.guidance,
+      detail: '',
+    };
+  }
+
+  // Live ✓/✗ checklist for all six/seven checks, refreshed every frame.
+  function renderChecklist(checks) {
+    const list = $('#quality-checklist');
+    if (!list) return;
+    list.innerHTML = checks.map(c => `
+      <li class="qc-row ${c.pass ? 'qc-pass' : 'qc-fail'}">
+        <span class="qc-mark">${c.pass ? '\u2713' : '\u2717'}</span>
+        <span class="qc-label">${c.label}</span>
+        <span class="qc-value">${c.value}</span>
+      </li>`).join('');
+  }
+
   function setRing(progress) {
     const circumference = 119.4; // 2 * PI * r(19)
     const fill = $('#ring-fill');
@@ -185,7 +210,10 @@
 
       state.camera = cam;
       state.capturing = false;
-      state.stability = new OMRGuidance.StabilityTracker(() => triggerCapture(cam, myToken));
+      // The Quality Validation Gate replaces the old single-condition
+      // StabilityTracker: capture only fires when all six/seven checks hold
+      // true continuously for HOLD_DURATION_MS.
+      state.stability = new QualityValidationEngine.Gate(() => triggerCapture(cam, myToken));
 
       cam.onStreamEnded = () => {
         if (myToken !== state.cameraToken) return; // already superseded/closed
@@ -197,12 +225,14 @@
       };
 
       if (cam.cv) {
-        cam.runAnalysisLoop((metrics, verdict) => {
+        cam.runAnalysisLoop((metrics) => {
           if (myToken !== state.cameraToken || state.capturing) return;
+          const result = state.stability.update(metrics, performance.now());
+          const verdict = verdictFromGate(result);
           drawHud(metrics, verdict);
           setStatus(verdict);
-          const progress = state.stability.update(metrics, verdict);
-          setRing(progress);
+          renderChecklist(result.checks);
+          setRing(result.holdProgress);
         });
       } else {
         // OpenCV.js failed to load (offline / blocked CDN): live guidance
