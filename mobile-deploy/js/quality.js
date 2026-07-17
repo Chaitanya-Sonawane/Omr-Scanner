@@ -29,9 +29,13 @@ const OMRQuality = (() => {
     // capture, so readiness is gated on idealAreaFrac (not the loose
     // minAreaFrac), guaranteeing a large, high-detail capture for the backend.
     // Widened from [0.70, 0.90]: a handheld phone rarely parks the sheet in
-    // such a narrow coverage band, so auto-capture almost never armed. This
-    // still guarantees a large, high-detail capture while being achievable.
-    idealAreaFrac: [0.55, 0.95],
+    // such a narrow coverage band, so auto-capture almost never armed. Lower
+    // bound dropped to 0.40 because a portrait OMR sheet inside a landscape/
+    // 4:3 camera preview only fills ~0.40-0.55 of the frame even when it is
+    // perfectly framed with all four corners unclipped, so a 0.55 floor made
+    // auto-capture unreachable for a correctly-held sheet. This still yields
+    // a large, high-detail capture while being achievable.
+    idealAreaFrac: [0.40, 0.95],
     aspectTolerance: 0.20,   // relative error allowed vs TARGET_ASPECT (was 0.14 - too tight for perspective foreshortening)
     cornerAngleTolDeg: 25,   // how rectangular the quad must look (was 18 - rejected normal handheld tilt)
     centerTolFrac: 0.15,     // centroid offset allowed, as frac of frame dim (was 0.10)

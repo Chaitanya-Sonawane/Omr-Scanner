@@ -50,7 +50,7 @@ const OMRQuality = (() => {
     // coverage 0.45-0.90, aspect 0.10, skew 12deg, center 0.07, sharp 55,
     // glare 0.025, motion 5.0, score 82) that almost never all held at once,
     // so auto-capture rarely/never fired even on a well-framed steady sheet.
-    readyAreaFrac: [0.55, 0.95],  // coverage must sit inside this band
+    readyAreaFrac: [0.40, 0.95],  // coverage band (0.40 floor: a portrait sheet in a landscape preview only fills ~0.40-0.55 even when perfectly framed)
     readyAspectTolerance: 0.20,   // perspective match vs template shape
     readySkewTolDeg: 25,          // corners within 25deg of square (handheld tilt)
     readyCenterTolFrac: 0.15,     // reasonably centered

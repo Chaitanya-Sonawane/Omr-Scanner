@@ -56,8 +56,14 @@ const QualityValidationEngine = (() => {
   // `cornersOk` -> allPass could never become true, so auto-capture never
   // fired even when the sheet looked perfectly aligned. These now mirror the
   // achievable tolerances used by OMRQuality.CFG for live guidance.
-  const COVERAGE_MIN      = 0.55;   // sheet must fill >=55% of the frame
+  const COVERAGE_MIN      = 0.40;   // sheet must fill >=40% of the frame
   const COVERAGE_MAX      = 0.97;   // leave a small margin so corners aren't clipped
+  // NOTE: a portrait OMR sheet inside a landscape/4:3 camera preview leaves
+  // large left/right margins even when it is perfectly framed and all four
+  // corners are comfortably inside the frame, so its area fraction is
+  // naturally only ~0.40-0.55. The previous 0.55 floor was therefore
+  // unreachable for a correctly-held sheet, so `coverageOk` never passed and
+  // auto-capture never fired. 0.40 matches the detector's real behaviour.
   const PERSPECTIVE_MAX_DEG = 25;   // max corner-angle deviation from 90° (handheld tilt)
   const STABILITY_MIN     = 60;     // 0..100 (motion<=12 on the 480px frame)
   const SHARP_MIN         = 11;     // 0..100 (raw Laplacian variance >= ~22)
@@ -154,7 +160,14 @@ const QualityValidationEngine = (() => {
     const lightingOk = cornersOk && light >= LIGHT_MIN;
 
     const tmpl = templateMatchPct(metrics.aspectErr);
-    const templateOk = cornersOk && !metrics.skewed && tmpl >= TEMPLATE_MIN;
+    // NOTE: we intentionally do NOT also require `!metrics.skewed` here.
+    // `metrics.skewed` is computed in quality.js with a tight 18 deg corner
+    // tolerance, while the dedicated `perspective` check above already gates
+    // squareness at the achievable handheld tolerance (PERSPECTIVE_MAX_DEG =
+    // 25 deg). Double-gating on skew meant a sheet tilted 18-25 deg passed
+    // `perspective` but still failed `template`, so `allPass` never became
+    // true and auto-capture never fired even on a well-aligned sheet.
+    const templateOk = cornersOk && tmpl >= TEMPLATE_MIN;
 
     // Display order matches the checklist UI; pass flags are independent so
     // every check is always visible even when several fail at once.
