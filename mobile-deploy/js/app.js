@@ -407,12 +407,37 @@
       if (vPanel) vPanel.dataset.state = 'hidden';
       $('#distance-guide').classList.remove('is-visible');
 
-      await cam.lockForCapture();
+      // Hard watchdog: no matter which native step stalls (focus-lock,
+      // flash, takePhoto/ImageCapture, createImageBitmap), the whole
+      // pre-upload sequence must finish within a fixed budget. If it
+      // doesn't, we recover the UI instead of leaving it frozen forever on
+      // "Captured ✓ — Sheet locked, processing…". This is the last line of
+      // defence behind the per-call timeouts already inside capture.js.
+      const preUpload = (async () => {
+        await cam.lockForCapture();
+        if (stale()) return null;
+        await flash();
+        if (stale()) return null;
+        return await cam.grabFullResFrame();
+      })();
+      let canvas = await Promise.race([
+        preUpload,
+        new Promise(r => setTimeout(() => r('__TIMEOUT__'), 12000)),
+      ]);
       if (stale()) return;
-      await flash();
-      if (stale()) return;
-      const canvas = await cam.grabFullResFrame();
-      if (stale()) return;
+      if (canvas === '__TIMEOUT__' || !canvas) {
+        // The capture hardware never handed us a frame in time — recover to
+        // the camera so the user can simply tap Capture again, rather than
+        // being stuck on the flash screen.
+        state.capturing = false;
+        if (state.stability) state.stability.reset();
+        if (captureBtn && token === state.cameraToken) captureBtn.disabled = false;
+        showView('camera');
+        $('#status-banner').dataset.state = 'error';
+        $('#status-text').textContent = 'Capture stalled — tap Capture to try again';
+        $('#status-detail').textContent = 'The camera didn’t return a photo in time.';
+        return;
+      }
 
       showView('processing');
       $('#processing-title').textContent = 'Checking image quality…';
