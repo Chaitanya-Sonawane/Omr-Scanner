@@ -12,8 +12,8 @@
 const OMRGuidance = (() => {
   const CFG = OMRQuality.CFG;
 
-  const STABILITY_MS = 900;         // continuous "ready" time required before auto-capture
-  const DRIFT_PX_TOL = 0.03;        // fractional corner drift (of frame diag) allowed during stability hold
+  const STABILITY_MS = 600;         // continuous "ready" time required before auto-capture (was 900 - felt like it never fired)
+  const DRIFT_PX_TOL = 0.05;        // fractional corner drift (of frame diag) allowed during stability hold (was 0.03 - restarted on normal hand tremor)
 
   // Ordered by priority: first failing check wins the on-screen message.
   function evaluate(metrics) {

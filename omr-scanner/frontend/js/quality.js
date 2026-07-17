@@ -34,26 +34,30 @@ const OMRQuality = (() => {
   const CFG = {
     minAreaFrac: 0.30,       // sheet must fill at least this much of the frame (detection)
     maxAreaFrac: 0.97,       // above this, corners are likely clipped
-    idealAreaFrac: [0.45, 0.90],
-    aspectTolerance: 0.14,   // relative error allowed vs TARGET_ASPECT (detection)
-    cornerAngleTolDeg: 18,   // how rectangular the quad must look (detection)
-    centerTolFrac: 0.10,     // centroid offset allowed, as frac of frame dim (detection)
+    idealAreaFrac: [0.55, 0.95],
+    aspectTolerance: 0.20,   // relative error allowed vs TARGET_ASPECT (was 0.14 - too tight for perspective foreshortening)
+    cornerAngleTolDeg: 25,   // how rectangular the quad must look (was 18 - rejected normal handheld tilt)
+    centerTolFrac: 0.15,     // centroid offset allowed, as frac of frame dim (was 0.10)
     edgeMarginFrac: 0.015,   // corner must be at least this far from frame edge (else "clipped")
-    minSharpness: 35,        // Laplacian variance floor on the downscaled analysis frame
-    minBrightness: 55,
-    maxBrightness: 225,
-    maxGlareFrac: 0.035,     // fraction of ROI pixels blown out (>=250)
-    maxMotion: 9.0,          // mean abs frame-diff floor for "hold steady"
+    minSharpness: 22,        // Laplacian variance floor (was 35 - rejected mildly-soft but perfectly readable frames)
+    minBrightness: 50,
+    maxBrightness: 232,
+    maxGlareFrac: 0.05,      // fraction of ROI pixels blown out (>=250)
+    maxMotion: 12.0,         // mean abs frame-diff floor for "hold steady" (was 9.0 - too jumpy for handheld)
 
-    // ---- strict auto-capture readiness gate (tighter than above) ----
-    readyAreaFrac: [0.45, 0.90],  // coverage must sit inside this band
-    readyAspectTolerance: 0.10,   // perspective must match template shape closely
-    readySkewTolDeg: 12,          // corners must be within 12deg of square
-    readyCenterTolFrac: 0.07,     // must be well-centered
-    readyMinSharpness: 55,        // stricter focus floor than detection
-    readyMaxGlareFrac: 0.025,     // stricter glare ceiling
-    readyMaxMotion: 5.0,          // must be nearly still, not just "not moving fast"
-    readyMinScore: 82,            // composite quality score (0-100) floor
+    // ---- auto-capture readiness gate ----
+    // Recalibrated to achievable handheld tolerances (was a very strict tier:
+    // coverage 0.45-0.90, aspect 0.10, skew 12deg, center 0.07, sharp 55,
+    // glare 0.025, motion 5.0, score 82) that almost never all held at once,
+    // so auto-capture rarely/never fired even on a well-framed steady sheet.
+    readyAreaFrac: [0.55, 0.95],  // coverage must sit inside this band
+    readyAspectTolerance: 0.20,   // perspective match vs template shape
+    readySkewTolDeg: 25,          // corners within 25deg of square (handheld tilt)
+    readyCenterTolFrac: 0.15,     // reasonably centered
+    readyMinSharpness: 22,        // focus floor aligned with detection
+    readyMaxGlareFrac: 0.05,      // glare ceiling
+    readyMaxMotion: 12.0,         // steady handheld hold
+    readyMinScore: 65,            // composite quality score (0-100) floor
   };
 
   function order4(pts) {

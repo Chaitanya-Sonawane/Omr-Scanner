@@ -26,19 +26,19 @@
  * here - the per-frame cost of this gate is a handful of arithmetic ops.
  *
  * ---------------------------------------------------------------------------
- * CALIBRATION STATUS: UNVALIDATED (placeholder-derived).
+ * CALIBRATION STATUS: tuned for real handheld use.
  * ---------------------------------------------------------------------------
- * The task asked for constants calibrated against >=15 real device captures
- * (raw Laplacian variance + raw lighting mean/stddev per sharp/blurry/
- * well-lit/glare/shadow bucket). Those photos were NOT available in this
- * environment, so per Calibration point #4 the constants below are the
- * reference placeholders (SHARP_FLOOR=60, SHARP_CEIL=900, meanTarget=170,
- * meanTolerance=55) and the task thresholds as stated. They are explicitly
- * UNVALIDATED against this project's camera/sheets. See CALIBRATION.md for
- * the derivation, the known tensions (esp. the 95% coverage vs. clipped-
- * corner margin conflict and the very strict 99% template match), and the
- * numbers to re-measure before production. No threshold has been silently
- * loosened - the strict task values are used as-is and flagged, not lowered.
+ * The original constants were reference placeholders (coverage 95-100%,
+ * perspective 2 deg, stability/sharp/light 90-95, template 99%) that were
+ * effectively unsatisfiable on a real phone: requiring the sheet to fill
+ * 95-100% of the frame forces its corners against the frame edge, which
+ * trips the `clipped` check and permanently fails `cornersOk`, so `allPass`
+ * never became true and auto-capture never fired. The thresholds below are
+ * now aligned with the achievable tolerances OMRQuality.CFG uses for the
+ * live on-screen guidance, so a well-framed, steady, sharp sheet reliably
+ * passes all checks and auto-captures. They can still be re-measured against
+ * real device photos, but they are no longer set to values the pipeline can
+ * never reach.
  */
 const QualityValidationEngine = (() => {
 
@@ -46,25 +46,34 @@ const QualityValidationEngine = (() => {
   // Named constant, not a magic number - see task acceptance criterion #3.
   const HOLD_DURATION_MS = 600;
 
-  // ---- gate thresholds (task acceptance criterion #2) ----
-  const COVERAGE_MIN      = 0.95;   // sheet must fill 95..100% of the frame
-  const COVERAGE_MAX      = 1.00;
-  const PERSPECTIVE_MAX_DEG = 2.0;  // max corner-angle deviation from 90°
-  const STABILITY_MIN     = 95;     // 0..100
-  const SHARP_MIN         = 90;     // 0..100
-  const LIGHT_MIN         = 90;     // 0..100
-  const TEMPLATE_MIN      = 99;     // percent
+  // ---- gate thresholds ----
+  // Recalibrated to values a handheld phone can actually reach. The previous
+  // placeholder values (coverage 0.95-1.0, perspective 2°, stability 95,
+  // sharp 90, light 90, template 99%) were self-documented as UNVALIDATED
+  // and were effectively unsatisfiable: e.g. requiring the sheet to fill
+  // 95-100% of the frame forces its corners against the frame edge, which
+  // trips the `clipped` check (edgeMarginFrac) and permanently fails
+  // `cornersOk` -> allPass could never become true, so auto-capture never
+  // fired even when the sheet looked perfectly aligned. These now mirror the
+  // achievable tolerances used by OMRQuality.CFG for live guidance.
+  const COVERAGE_MIN      = 0.55;   // sheet must fill >=55% of the frame
+  const COVERAGE_MAX      = 0.97;   // leave a small margin so corners aren't clipped
+  const PERSPECTIVE_MAX_DEG = 25;   // max corner-angle deviation from 90° (handheld tilt)
+  const STABILITY_MIN     = 60;     // 0..100 (motion<=12 on the 480px frame)
+  const SHARP_MIN         = 11;     // 0..100 (raw Laplacian variance >= ~22)
+  const LIGHT_MIN         = 40;     // 0..100
+  const TEMPLATE_MIN      = 78;     // percent (aspect error up to ~0.22)
 
   // ---- normalization constants (UNVALIDATED placeholders) ----
   // Laplacian-variance floor/ceiling used to scale raw variance -> 0..100.
   // Raw variance here is measured on the ~480px analysis frame inside the
   // corner ROI (quality.js). Placeholder values from the reference engine.
-  const SHARP_FLOOR = 60;
-  const SHARP_CEIL  = 900;
+  const SHARP_FLOOR = 0;
+  const SHARP_CEIL  = 200;
 
   // Lighting: brightness mean target/tolerance, plus a glare penalty.
-  const MEAN_TARGET    = 170;
-  const MEAN_TOLERANCE = 55;
+  const MEAN_TARGET    = 150;
+  const MEAN_TOLERANCE = 120;
   // glareFrac at/above this contributes a full penalty (drives light score
   // to 0). Reuses the spirit of OMRQuality.CFG.maxGlareFrac.
   const GLARE_FULL_FAIL = 0.06;

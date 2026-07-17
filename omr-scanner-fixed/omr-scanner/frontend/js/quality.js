@@ -24,16 +24,16 @@ const OMRQuality = (() => {
   const CFG = {
     minAreaFrac: 0.30,       // sheet must fill at least this much of the frame
     maxAreaFrac: 0.97,       // above this, corners are likely clipped
-    idealAreaFrac: [0.45, 0.90],
-    aspectTolerance: 0.14,   // relative error allowed vs TARGET_ASPECT
-    cornerAngleTolDeg: 18,   // how rectangular the quad must look
-    centerTolFrac: 0.10,     // centroid offset allowed, as frac of frame dim
+    idealAreaFrac: [0.55, 0.95],
+    aspectTolerance: 0.20,   // relative error allowed vs TARGET_ASPECT (was 0.14 - too tight for perspective foreshortening)
+    cornerAngleTolDeg: 25,   // how rectangular the quad must look (was 18 - rejected normal handheld tilt)
+    centerTolFrac: 0.15,     // centroid offset allowed, as frac of frame dim (was 0.10)
     edgeMarginFrac: 0.015,   // corner must be at least this far from frame edge (else "clipped")
-    minSharpness: 35,        // Laplacian variance floor on the downscaled analysis frame
-    minBrightness: 55,
-    maxBrightness: 225,
-    maxGlareFrac: 0.035,     // fraction of ROI pixels blown out (>=250)
-    maxMotion: 9.0,          // mean abs frame-diff floor for "hold steady"
+    minSharpness: 22,        // Laplacian variance floor (was 35 - rejected mildly-soft but perfectly readable frames)
+    minBrightness: 50,
+    maxBrightness: 232,
+    maxGlareFrac: 0.05,      // fraction of ROI pixels blown out (>=250)
+    maxMotion: 12.0,         // mean abs frame-diff floor for "hold steady" (was 9.0 - too jumpy for handheld)
   };
 
   function order4(pts) {

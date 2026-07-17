@@ -17,9 +17,9 @@ const OMRGuidance = (() => {
   // both a wall-clock hold and a minimum evidence count, so a single lucky
   // frame can never trigger a capture. Deliberately longer than a typical
   // "document scanner" because accuracy, not speed, is the priority here.
-  const STABILITY_MS = 1200;        // continuous "ready" time required before auto-capture
-  const MIN_READY_FRAMES = 6;       // minimum consecutive ready frames as well
-  const DRIFT_PX_TOL = 0.02;        // fractional corner drift (of frame diag) allowed during stability hold
+  const STABILITY_MS = 600;         // continuous "ready" time required before auto-capture (was 1200 - felt like it never fired)
+  const MIN_READY_FRAMES = 3;       // minimum consecutive ready frames as well (was 6)
+  const DRIFT_PX_TOL = 0.05;        // fractional corner drift (of frame diag) allowed during stability hold (was 0.02 - restarted on normal hand tremor)
 
   // Ordered by priority: first failing check wins the on-screen message.
   // Uses the STRICT `ready*` thresholds so the on-screen "Ready" state and
