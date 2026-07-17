@@ -272,7 +272,7 @@
     el.classList.remove('is-flashing');
   }
 
-  async function triggerCapture(cam, token) {
+  async function triggerCapture(cam, token, manual = false) {
     if (state.capturing || !state.camera || token !== state.cameraToken) return;
     state.capturing = true;
 
@@ -316,8 +316,14 @@
       await cam.unlockAfterCapture();
       if (stale()) return;
 
-      if (!validation.pass) {
+      if (!validation.pass && !manual) {
         // Reject locally - never upload a capture we already know is bad.
+        // EXCEPTION: a MANUAL capture is an explicit user decision to take
+        // this shot. In that case we do NOT block it on the local quality
+        // gate (which can be over-strict, e.g. failing to detect the sheet
+        // corners on the working copy even when the sheet is clearly in
+        // frame) - we upload it and let the backend be the final judge.
+        // Otherwise the user can end up unable to capture at all.
         state.capturing = false;
         state.stability.reset();
         showView('camera');
@@ -325,6 +331,9 @@
         $('#status-text').textContent = 'Retake needed: ' + validation.reasons[0];
         $('#status-detail').textContent = validation.reasons.slice(1).join(' · ');
         return;
+      }
+      if (!validation.pass && manual) {
+        console.warn('[App] Manual capture bypassing local quality gate:', validation.reasons);
       }
 
       $('#processing-title').textContent = 'Uploading sheet…';
@@ -483,7 +492,7 @@
   });
   $('#btn-manual-capture').addEventListener('click', () => {
     if (state.camera && !state.capturing) {
-      triggerCapture(state.camera, state.cameraToken);
+      triggerCapture(state.camera, state.cameraToken, true);
     }
   });
   $('#btn-retake').addEventListener('click', retakeCurrentSheet);

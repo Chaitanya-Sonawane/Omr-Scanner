@@ -135,15 +135,30 @@ const OMRCapture = (() => {
 
       if (typeof this.onPreviewReady === 'function') this.onPreviewReady();
 
-      // Now load OpenCV (preview is already live on screen).
-      const cv = await loadOpenCV();
-      this.cv = cv;
-
+      // Set up the track/still-capture plumbing right away so the camera is
+      // fully usable (including MANUAL capture) the instant the preview is
+      // live - it must NOT depend on OpenCV having finished loading.
       this.track = this.stream.getVideoTracks()[0];
       if ('ImageCapture' in window) {
         try { this.imageCapture = new ImageCapture(this.track); } catch (e) { this.imageCapture = null; }
       }
       this.stopped = false;
+
+      // Load OpenCV in the BACKGROUND. Previously start() did
+      // `await loadOpenCV()` here, so a slow (10 MB WASM on a mobile
+      // connection) or failing download left the whole scanner frozen on
+      // "Loading scanner…" - the manual shutter and the analysis loop only
+      // got enabled AFTER this resolved, so the user could be stuck with no
+      // way to capture at all. Now start() resolves as soon as the preview
+      // is live; callers await `cvReady` separately to start live guidance,
+      // and manual capture works even if OpenCV never loads.
+      this.cvReady = loadOpenCV()
+        .then((cv) => { this.cv = cv; return cv; })
+        .catch((e) => {
+          console.warn('[Camera] OpenCV.js failed to load - live guidance/auto-capture disabled, manual capture still works:', e);
+          this.cv = null;
+          return null;
+        });
 
       // Mobile browsers/OSes can reclaim the camera at any time - the tab
       // is backgrounded, another app opens the camera, the device sleeps,
@@ -292,6 +307,13 @@ const OMRCapture = (() => {
      */
     validateFullRes(canvas) {
       const cv = this.cv;
+      if (!cv) {
+        // OpenCV never finished loading - we can't pre-validate locally, so
+        // pass the capture through and let the backend be the quality gate.
+        // This keeps manual capture working even if the vision engine is
+        // slow or blocked, instead of blocking the user entirely.
+        return { pass: true, reasons: [], metrics: null };
+      }
 
       // 1) Geometry pass on a small working copy - cheap, and corner
       // position doesn't need full resolution.

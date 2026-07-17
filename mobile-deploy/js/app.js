@@ -279,11 +279,12 @@
       state.capturing = false;
       state.stability = new OMRGuidance.StabilityTracker(() => triggerCapture(cam, myToken));
 
-      // The vision engine (OpenCV) has finished loading and the analysis
-      // loop is about to start — enable the manual shutter so the user can
-      // always force a capture, even if the strict auto-capture gate never
-      // decides the frame is "perfect". Also clear the "Loading scanner…"
-      // banner immediately so it can never look frozen.
+      // The camera preview is live. Enable the manual shutter and clear the
+      // "Starting camera…" banner IMMEDIATELY - this no longer waits for
+      // OpenCV, so the user can always force a capture even if the (10 MB)
+      // vision engine is still downloading or fails to load. Previously this
+      // whole block only ran after `await loadOpenCV()`, so a slow/blocked
+      // WASM download left the scanner permanently stuck on "Loading scanner…".
       const captureBtn = $('#btn-capture');
       if (captureBtn) {
         captureBtn.disabled = false;
@@ -301,14 +302,28 @@
         $('#status-detail').textContent = 'The camera stream stopped unexpectedly — close and reopen the camera to continue.';
       };
 
-      cam.runAnalysisLoop((metrics, verdict) => {
-        if (myToken !== state.cameraToken || state.capturing) return;
-        drawHud(metrics, verdict);
-        setStatus(verdict);
-        updateValidationPanel(verdict);
-        updateDistanceGuide(verdict);
-        const progress = state.stability.update(metrics, verdict);
-        setRing(progress);
+      // Start live guidance / auto-capture only once OpenCV has finished
+      // loading in the background. If it never loads, the manual shutter
+      // above still works - the scanner is usable either way.
+      cam.cvReady.then((cv) => {
+        if (myToken !== state.cameraToken) return; // camera was closed/superseded meanwhile
+        if (!cv) {
+          // Vision engine unavailable: keep manual capture, drop live guidance.
+          $('#status-banner').dataset.state = 'warn';
+          $('#status-text').textContent = 'Live guidance unavailable';
+          $('#status-detail').textContent = 'Frame the whole sheet and tap Capture manually.';
+          return;
+        }
+        // OpenCV is ready: start the live guidance / auto-capture loop.
+        cam.runAnalysisLoop((metrics, verdict) => {
+          if (myToken !== state.cameraToken || state.capturing) return;
+          drawHud(metrics, verdict);
+          setStatus(verdict);
+          updateValidationPanel(verdict);
+          updateDistanceGuide(verdict);
+          const progress = state.stability.update(metrics, verdict);
+          setRing(progress);
+        });
       });
     } finally {
       openingCamera = false;
