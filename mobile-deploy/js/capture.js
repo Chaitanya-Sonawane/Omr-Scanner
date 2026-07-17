@@ -37,6 +37,25 @@ const OMRCapture = (() => {
   // against real captured photos.
   const SHARPNESS_SCALE_FACTOR = (SHARPNESS_WORK_LONG_EDGE / ANALYZE_WIDTH) ** 2;
 
+  // Wraps a promise so it can never hang the capture pipeline forever. If
+  // `promise` doesn't settle within `ms`, we resolve with `fallback` (for
+  // best-effort steps like focus-lock / takePhoto that we can safely skip)
+  // rather than leaving the UI frozen on "Captured ✓". This is the core fix
+  // for the "stuck on the flash screen" symptom: several native camera APIs
+  // (applyConstraints, ImageCapture.takePhoto, createImageBitmap) are known
+  // to occasionally never resolve on some Android WebViews/browsers.
+  function withTimeout(promise, ms, fallback) {
+    let timer = null;
+    const guard = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(fallback), ms);
+    });
+    return Promise.race([
+      Promise.resolve(promise).then((v) => { clearTimeout(timer); return v; },
+        (e) => { clearTimeout(timer); throw e; }),
+      guard,
+    ]);
+  }
+
   let cvReadyPromise = null;
   function loadOpenCV() {
     if (cvReadyPromise) return cvReadyPromise;
@@ -244,7 +263,10 @@ const OMRCapture = (() => {
         if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('manual')) {
           advanced.push({ whiteBalanceMode: 'manual' });
         }
-        if (advanced.length) await this.track.applyConstraints({ advanced });
+        // applyConstraints is known to occasionally never resolve on some
+        // Android camera stacks; cap it so focus-lock can never freeze the
+        // capture. Focus-lock is purely a nice-to-have before the shot.
+        if (advanced.length) await withTimeout(this.track.applyConstraints({ advanced }), 1500, null);
       } catch (e) {
         // Not all browsers/devices expose these controls — capture proceeds regardless.
       }
@@ -262,8 +284,12 @@ const OMRCapture = (() => {
       let bitmap = null;
       if (this.imageCapture && this.imageCapture.takePhoto) {
         try {
-          const blob = await this.imageCapture.takePhoto();
-          bitmap = await createImageBitmap(blob);
+          // ImageCapture.takePhoto() can hang indefinitely on some Android
+          // devices (never resolving, never rejecting) — the classic cause of
+          // the "stuck on Captured ✓" freeze. Cap it and fall back to grabbing
+          // the current live <video> frame below if it doesn't answer in time.
+          const blob = await withTimeout(this.imageCapture.takePhoto(), 3500, null);
+          if (blob) bitmap = await withTimeout(createImageBitmap(blob), 2500, null);
         } catch (e) {
           bitmap = null;
         }
@@ -418,7 +444,23 @@ const OMRCapture = (() => {
     if (sessionId) form.append('session_id', sessionId);
     if (sheetLabel) form.append('sheet_label', sheetLabel);
     const apiBase = window.MOBILE_API_URL ? `${window.MOBILE_API_URL}/api/mobile/scan` : '/api/mobile/scan';
-    const resp = await fetch(apiBase, { method: 'POST', body: form });
+    // Abort the upload if the backend never answers, instead of leaving the
+    // user frozen on "Uploading sheet…" forever (unreachable/slow/cold-start
+    // server). 60s is generous for a cold-start backend on mobile data but
+    // still eventually surfaces a clear "try again" error rather than a hang.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    let resp;
+    try {
+      resp = await fetch(apiBase, { method: 'POST', body: form, signal: controller.signal });
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        throw new Error('Upload timed out — the server didn’t respond. Check your connection and try again.');
+      }
+      throw new Error(`Upload failed — could not reach the server. ${e && e.message ? e.message : ''}`.trim());
+    } finally {
+      clearTimeout(timer);
+    }
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       throw new Error(`Upload failed (${resp.status}): ${text}`);
