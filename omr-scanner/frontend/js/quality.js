@@ -21,19 +21,39 @@ const OMRQuality = (() => {
   function setTargetAspect(a) { TARGET_ASPECT = a; }
 
   // ---- tunables (analysis runs on a downscaled ~480px-wide frame) ----
+  //
+  // Two tiers deliberately kept separate:
+  //   * DETECTION tunables (minAreaFrac, cornerAngleTolDeg, ...) stay
+  //     permissive so the sheet is FOUND and tracked even when it's not
+  //     yet perfectly placed - otherwise the HUD/guidance can't tell the
+  //     user how to improve.
+  //   * READINESS tunables (the `ready*` fields) are strict: they gate
+  //     auto-capture. The whole philosophy here is "a delayed but perfect
+  //     capture beats a fast imperfect one", so these are intentionally
+  //     tighter than the detection floors.
   const CFG = {
-    minAreaFrac: 0.30,       // sheet must fill at least this much of the frame
+    minAreaFrac: 0.30,       // sheet must fill at least this much of the frame (detection)
     maxAreaFrac: 0.97,       // above this, corners are likely clipped
     idealAreaFrac: [0.45, 0.90],
-    aspectTolerance: 0.14,   // relative error allowed vs TARGET_ASPECT
-    cornerAngleTolDeg: 18,   // how rectangular the quad must look
-    centerTolFrac: 0.10,     // centroid offset allowed, as frac of frame dim
+    aspectTolerance: 0.14,   // relative error allowed vs TARGET_ASPECT (detection)
+    cornerAngleTolDeg: 18,   // how rectangular the quad must look (detection)
+    centerTolFrac: 0.10,     // centroid offset allowed, as frac of frame dim (detection)
     edgeMarginFrac: 0.015,   // corner must be at least this far from frame edge (else "clipped")
     minSharpness: 35,        // Laplacian variance floor on the downscaled analysis frame
     minBrightness: 55,
     maxBrightness: 225,
     maxGlareFrac: 0.035,     // fraction of ROI pixels blown out (>=250)
     maxMotion: 9.0,          // mean abs frame-diff floor for "hold steady"
+
+    // ---- strict auto-capture readiness gate (tighter than above) ----
+    readyAreaFrac: [0.45, 0.90],  // coverage must sit inside this band
+    readyAspectTolerance: 0.10,   // perspective must match template shape closely
+    readySkewTolDeg: 12,          // corners must be within 12deg of square
+    readyCenterTolFrac: 0.07,     // must be well-centered
+    readyMinSharpness: 55,        // stricter focus floor than detection
+    readyMaxGlareFrac: 0.025,     // stricter glare ceiling
+    readyMaxMotion: 5.0,          // must be nearly still, not just "not moving fast"
+    readyMinScore: 82,            // composite quality score (0-100) floor
   };
 
   function order4(pts) {
@@ -282,5 +302,67 @@ const OMRQuality = (() => {
     return metrics;
   }
 
-  return { CFG, setTargetAspect, analyzeFrame, detectSheetQuad, laplacianVariance, brightnessAndGlare, boundingRectClamped };
+  /**
+   * Composite 0-100 image-quality score with per-dimension sub-scores,
+   * combining every signal that predicts whether the eventual backend
+   * scan will be accurate: alignment (centering), perspective (aspect +
+   * squareness), focus (sharpness), and exposure (brightness + glare),
+   * gated by coverage. This is the single number the strict auto-capture
+   * gate checks (CFG.readyMinScore) so "good enough to capture" is one
+   * tunable rather than a scatter of independent booleans - and it's
+   * surfaced for debugging so a marginal frame's weakest dimension is
+   * obvious. Returns 0 with an empty breakdown when no sheet is found.
+   */
+  function qualityScore(metrics) {
+    if (!metrics.sheetFound || !metrics.quad) {
+      return { score: 0, sub: { alignment: 0, perspective: 0, focus: 0, exposure: 0, coverage: 0 } };
+    }
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+    // alignment: 1.0 when perfectly centered, 0 at the detection tolerance.
+    const alignment = clamp01(1 - (metrics.centerOffsetFrac || 0) / CFG.centerTolFrac);
+
+    // perspective: aspect closeness AND corner squareness must both hold.
+    const aspectPart = clamp01(1 - (metrics.aspectErr || 0) / CFG.aspectTolerance);
+    const perspective = metrics.skewed ? Math.min(aspectPart, 0.4) : aspectPart;
+
+    // focus: sharpness above the strict floor saturates to 1.
+    const focus = clamp01((metrics.sharpness || 0) / (CFG.readyMinSharpness * 1.6));
+
+    // exposure: penalise both dark/bright extremes and glare.
+    const b = metrics.brightness || 0;
+    const brightPart = (b < CFG.minBrightness || b > CFG.maxBrightness)
+      ? 0
+      : clamp01(1 - Math.abs(b - 140) / 110);
+    const glarePart = clamp01(1 - (metrics.glareFrac || 0) / CFG.readyMaxGlareFrac);
+    const exposure = Math.min(brightPart, glarePart);
+
+    // coverage: 1.0 inside the ideal band, tapering outside it.
+    const [lo, hi] = CFG.readyAreaFrac;
+    const a = metrics.areaFrac || 0;
+    let coverage;
+    if (a < lo) coverage = clamp01(a / lo);
+    else if (a > hi) coverage = clamp01(1 - (a - hi) / (1 - hi));
+    else coverage = 1;
+
+    const score = 100 * (
+      0.25 * alignment +
+      0.25 * perspective +
+      0.25 * focus +
+      0.15 * exposure +
+      0.10 * coverage
+    );
+    return {
+      score: Math.round(score),
+      sub: {
+        alignment: Math.round(alignment * 100),
+        perspective: Math.round(perspective * 100),
+        focus: Math.round(focus * 100),
+        exposure: Math.round(exposure * 100),
+        coverage: Math.round(coverage * 100),
+      },
+    };
+  }
+
+  return { CFG, setTargetAspect, analyzeFrame, qualityScore, detectSheetQuad, laplacianVariance, brightnessAndGlare, boundingRectClamped };
 })();

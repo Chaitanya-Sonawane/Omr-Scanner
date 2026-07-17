@@ -13,6 +13,20 @@
  */
 const OMRCapture = (() => {
 
+  // Lightweight debug logging, off by default. Enable from the console with
+  //   localStorage.setItem('omrDebug', '1')   (or window.OMR_DEBUG = true)
+  // to stream per-frame corner/blur/perspective/quality metrics and the
+  // full-res capture gate + processing time - the instrumentation the
+  // issue asks for, without spamming the console for ordinary users.
+  function debugEnabled() {
+    try {
+      return window.OMR_DEBUG === true || localStorage.getItem('omrDebug') === '1';
+    } catch (e) { return window.OMR_DEBUG === true; }
+  }
+  function dlog(...args) {
+    if (debugEnabled()) console.log('[OMR]', ...args);
+  }
+
   const ANALYZE_INTERVAL_MS = 110;      // ~9fps live analysis - enough for smooth guidance, light on CPU
   const ANALYZE_WIDTH = 480;            // downscaled working width for the analysis loop
   const MAX_UPLOAD_LONG_EDGE = 2600;    // only downsize a capture if it's larger than this
@@ -173,6 +187,22 @@ const OMRCapture = (() => {
         this.prevGray = gray;
 
         const verdict = OMRGuidance.evaluate(metrics);
+        if (debugEnabled()) {
+          dlog('frame', {
+            sheet: metrics.sheetFound,
+            method: metrics.method,
+            coverage: +(metrics.areaFrac * 100).toFixed(0),
+            aspectErr: metrics.aspectErr != null ? +(metrics.aspectErr * 100).toFixed(1) : null,
+            skewed: metrics.skewed,
+            blur: +(metrics.sharpness || 0).toFixed(0),
+            brightness: +(metrics.brightness || 0).toFixed(0),
+            glare: +((metrics.glareFrac || 0) * 100).toFixed(1),
+            motion: +(metrics.motion || 0).toFixed(1),
+            quality: verdict.score,
+            sub: verdict.subScores,
+            verdict: verdict.code,
+          });
+        }
         onFrame(metrics, verdict);
       };
       this.loopHandle = requestAnimationFrame(step);
@@ -258,6 +288,7 @@ const OMRCapture = (() => {
      */
     validateFullRes(canvas) {
       const cv = this.cv;
+      const t0 = performance.now();
 
       // 1) Geometry pass on a small working copy - cheap, and corner
       // position doesn't need full resolution.
@@ -317,7 +348,30 @@ const OMRCapture = (() => {
       if (metrics.brightness < OMRQuality.CFG.minBrightness * 0.9) reasons.push('Image too dark');
       if (metrics.brightness > OMRQuality.CFG.maxBrightness * 1.05) reasons.push('Image too bright / overexposed');
 
-      return { pass: reasons.length === 0, reasons, metrics };
+      // Composite quality-score gate on the actual captured frame, using
+      // the same score the live gate used - a frame that squeaked past the
+      // live loop but doesn't hold up at capture resolution is rejected.
+      const q = OMRQuality.qualityScore(metrics);
+      if (metrics.sheetFound && q.score < OMRQuality.CFG.readyMinScore) {
+        reasons.push(`Overall image quality too low (${q.score})`);
+      }
+      metrics.qualityScore = q.score;
+      metrics.qualitySub = q.sub;
+
+      const elapsedMs = +(performance.now() - t0).toFixed(1);
+      dlog('validateFullRes', {
+        pass: reasons.length === 0,
+        quality: q.score,
+        sub: q.sub,
+        blur: +metrics.sharpness.toFixed(0),
+        aspectErr: metrics.aspectErr != null ? +(metrics.aspectErr * 100).toFixed(1) : null,
+        brightness: +metrics.brightness.toFixed(0),
+        glare: +(metrics.glareFrac * 100).toFixed(1),
+        reasons,
+        processingMs: elapsedMs,
+      });
+
+      return { pass: reasons.length === 0, reasons, metrics, qualityScore: q.score, processingMs: elapsedMs };
     }
 
     stop() {

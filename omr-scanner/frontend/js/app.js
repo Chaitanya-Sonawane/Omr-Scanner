@@ -227,6 +227,17 @@
       const result = await OMRCapture.uploadSheet(blob, { sessionId: state.sessionId, sheetLabel });
       if (stale()) return;
 
+      if (window.OMR_DEBUG === true || (() => { try { return localStorage.getItem('omrDebug') === '1'; } catch (e) { return false; } })()) {
+        console.log('[OMR] scan result', {
+          templateValid: result.template_valid,
+          templateMatch: result.template_match,
+          avgConfidence: result.avg_confidence,
+          flagged: result.flagged_count,
+          retake: result.retake_recommended,
+          backendMs: result.processing_ms,
+        });
+      }
+
       state.sheetsScanned += 1;
       state.results.push(result);
       renderResult(result);
@@ -259,7 +270,14 @@
       badge.dataset.state = 'warn';
       icon.innerHTML = '<path d="M12 3 2 21h20L12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><line x1="12" y1="9" x2="12" y2="14" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="17.5" r="1.1" fill="currentColor"/>';
       title.textContent = 'Retake recommended';
-      sub.textContent = `Confidence ${result.avg_confidence.toFixed(0)}% — below the accuracy threshold`;
+      // A failed post-correction template match is the more fundamental
+      // reason to retake than a low confidence average, so lead with it.
+      if (result.template_valid === false) {
+        const pct = result.template_match != null ? ` (${Math.round(result.template_match)}% template match)` : '';
+        sub.textContent = `Captured sheet didn\u2019t match the template layout${pct} — realign and retake`;
+      } else {
+        sub.textContent = `Confidence ${result.avg_confidence.toFixed(0)}% — below the accuracy threshold`;
+      }
     } else {
       badge.dataset.state = 'ok';
       icon.innerHTML = '<path d="M5 13l4 4L19 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>';

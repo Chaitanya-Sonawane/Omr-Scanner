@@ -27,12 +27,53 @@ from pathlib import Path
 from threading import Lock
 from typing import Optional
 
+import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = Path(__file__).parent
+
+
+def _json_safe(obj):
+    """
+    Recursively converts numpy scalar types to native Python types.
+
+    scan_omr.py's classify_question() computes confidence scores through
+    numpy (np.clip, np.argmax, etc.), and some of those numpy.float64 /
+    numpy.bool_ values leak through into the rows/meta dicts it returns
+    (e.g. the MULTI-status confidence path: `100.0 * (1.0 - np.clip(...))`
+    stays a numpy.float64 all the way through, even after round()).
+
+    numpy.float64 happens to subclass Python's float, so stdlib json can
+    serialize it - but numpy.bool_ does NOT subclass Python's bool, and
+    is silently produced by any comparison against a numpy.float64 (e.g.
+    app.py's own `avg_conf < RETAKE_CONFIDENCE_THRESHOLD` below, once
+    avg_conf has been contaminated by a single numpy-typed Confidence
+    value in the list it was averaged from). That combination reliably
+    reproduces as an unhandled 500 on /api/scan for any sheet containing
+    a MULTI answer or a force-reviewed question - confirmed via direct
+    testing, not hypothetical - rather than the clean 4xx or valid 200
+    every other malformed/edge-case input gets. This sanitizer is the
+    JSON-serialization boundary's own responsibility: it guarantees a
+    valid response regardless of what numeric types scan_omr.py's
+    internals happen to hand back, without needing to hunt down and fix
+    every individual numpy-typed value at its source.
+    """
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return _json_safe(obj.tolist())
+    return obj
 
 # core/ holds the existing OMR pipeline (align.py, scan_omr.py, ...) exactly
 # as delivered. Those files import each other as flat top-level modules
@@ -137,12 +178,25 @@ def _summarize(rows: list[dict], meta: dict) -> dict:
         for r in rows
         if r["Status"] in ("REVIEW", "MULTI") or r["Confidence"] < AMBIGUOUS_QUESTION_THRESHOLD
     ]
-    retake_recommended = avg_conf < RETAKE_CONFIDENCE_THRESHOLD or len(flagged) > N_QUESTIONS * 0.25
+    # A capture that failed post-homography template validation is never
+    # trusted regardless of the (meaningless, since bubbles were sampled off
+    # a mismatched layout) confidence average - it always recommends a retake.
+    template_validation = meta.get("template_validation", {})
+    template_valid = template_validation.get("valid", True)
+    retake_recommended = (
+        avg_conf < RETAKE_CONFIDENCE_THRESHOLD
+        or len(flagged) > N_QUESTIONS * 0.25
+        or not template_valid
+    )
     return {
         "avg_confidence": round(avg_conf, 1),
         "flagged_count": len(flagged),
         "flagged_questions": flagged,
         "retake_recommended": retake_recommended,
+        "template_valid": template_valid,
+        "template_match": template_validation.get("template_match"),
+        "template_validation": template_validation,
+        "processing_ms": meta.get("processing_ms"),
         "sheet_notes": meta.get("sheet_notes", []),
         "align_quality": meta.get("align_quality", {}),
         "image_quality": meta.get("image_quality", {}),
@@ -156,7 +210,7 @@ def create_session():
 
 @app.get("/api/session/{session_id}/stats")
 def session_stats(session_id: str):
-    return sessions.stats(session_id)
+    return _json_safe(sessions.stats(session_id))
 
 
 @app.post("/api/scan")
@@ -188,23 +242,23 @@ async def scan(
 
     summary = _summarize(rows, meta)
 
-    result = {
+    result = _json_safe({
         "sheet_id": sheet_id,
         "sheet_label": sheet_label,
         "questions": rows,
         **summary,
-    }
+    })
 
     if session_id:
         sessions.add_result(
             session_id,
-            {
+            _json_safe({
                 "sheet_id": sheet_id,
                 "sheet_label": sheet_label,
                 "avg_confidence": summary["avg_confidence"],
                 "flagged_count": summary["flagged_count"],
                 "retake_recommended": summary["retake_recommended"],
-            },
+            }),
         )
 
     return JSONResponse(result)

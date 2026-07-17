@@ -26,6 +26,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from openpyxl.styles import PatternFill
 
 from align import align_sheet, load_image, blur_score
 from calibrate_template import detect_grid_lines, PARAM_SWEEP, HEADER_ROWS
+from template_validation import validate_template
 
 TEMPLATE_PATH = "template.json"
 N_QUESTIONS = 40
@@ -49,6 +51,20 @@ REVIEW_MARGIN = 0.06    # fraction of the sheet's fill-value range
 MIN_FILL_RATIO = 0.22   # a genuine fill should cover at least ~22% of the ROI
 GOOD_FILL_RATIO = 0.55  # coverage at/above this is treated as fully confident
 MIN_SCORE_RANGE = 20.0  # below this, the sheet's own contrast is too flat to trust
+
+# Absolute (non-z-scored) floor on local_bg_contrast, in the same raw
+# darkness units as extract_bubble_features(). A genuine ink mark - even a
+# very faint one - is physically darker than the paper immediately outside
+# its own printed circle, so local_bg_contrast must be positive. Real
+# fills measured 75-100+ in validation; genuinely blank bubbles measured
+# -35 to +10 (print/JPEG noise around otherwise-identical outline
+# circles). NO_EVIDENCE_BG_CONTRAST catches the confident case (not one
+# option is even darker than its own background - the 4-way z-score
+# comparison can only be reacting to noise, not ink); MIN_ABS_BG_CONTRAST
+# is the higher bar required before a z-score "winner" is trusted as OK
+# rather than downgraded to REVIEW.
+NO_EVIDENCE_BG_CONTRAST = 0.0
+MIN_ABS_BG_CONTRAST = 10.0
 
 # --- Image-quality-aware thresholds (WhatsApp-compressed / low-res / blurry
 # mobile photos need more lenient, evidence-based handling than a crisp
@@ -415,6 +431,22 @@ def classify_question(features, threshold, score_range, image_quality=None):
     fill_local = [f["fill_ratio_local"] for f in features]
     bg_contrast = [f["local_bg_contrast"] for f in features]
 
+    # Physical-evidence guard, checked BEFORE any z-scoring: with only 4
+    # samples per question, the robust z-score below can be swung by
+    # ordinary print/JPEG-compression noise between four otherwise-
+    # identical BLANK outline circles - on real photos this reliably
+    # produces false "OK" calls with no genuine ink anywhere on the row
+    # (validated directly: confirmed cases had local_bg_contrast strongly
+    # NEGATIVE for all 4 options - i.e. the "winning" bubble's interior
+    # was actually LIGHTER than its own surrounding paper, which is
+    # physically impossible for a real mark). If not one option is even
+    # darker than its own local background, no amount of relative z-score
+    # separation can be trusted as a genuine fill - this is a hard,
+    # absolute-scale check, independent of and prior to the relative
+    # comparison that follows.
+    if max(bg_contrast) <= NO_EVIDENCE_BG_CONTRAST:
+        return None, "BLANK", 92.0, ""
+
     z_center = _robust_zscore(center_scores)
     z_connected = _robust_zscore(connected)
     z_filllocal = _robust_zscore(fill_local)
@@ -480,6 +512,18 @@ def classify_question(features, threshold, score_range, image_quality=None):
     note = ""
     if fill_best < fill_floor and sheet_margin < -0.15:
         note = "faint relative to the sheet as a whole, but clearly the darkest option within its own row"
+
+    # Second physical-evidence guard: the winner cleared the NO_EVIDENCE
+    # floor above (it IS darker than its own local background), but if
+    # that darkening is only marginal AND the pixel-level ink-blob
+    # detector also found nothing (fill_best ~ 0), the z-score comparison
+    # is still working mostly off noise rather than a clearly-real mark.
+    # Downgraded to REVIEW rather than trusted as OK - a human glance
+    # resolves it either way, which is far safer than a silent wrong read.
+    if bg_contrast[best_idx] < MIN_ABS_BG_CONTRAST and fill_best < fill_floor * 0.5:
+        review_conf = round(30.0 + 40.0 * np.clip(bg_contrast[best_idx] / MIN_ABS_BG_CONTRAST, 0.0, 1.0), 1)
+        note = (note + "; " if note else "") + "marginal physical evidence of a fill - flagged for manual check instead of silently accepted"
+        return best_idx + 1, "REVIEW", review_conf, note
 
     return best_idx + 1, "OK", confidence, note
 
@@ -604,7 +648,10 @@ def grid_correct(gray, template):
     ref_rows = template.get("ref_row_lines")
     ref_cols = template.get("ref_col_lines")
     if not ref_rows or not ref_cols:
-        return (lambda x, y: (x, y)), False
+        return (lambda x, y: (x, y)), False, {
+            "matched": False, "row_full": False, "col_solved": False,
+            "row_residual_px": None, "col_residual_px": None,
+        }
 
     n_rows, n_cols = len(ref_rows), len(ref_cols)
     ref_rows_arr = np.array(ref_rows)
@@ -638,7 +685,7 @@ def grid_correct(gray, template):
             if 0.85 <= a <= 1.15:
                 resid = np.abs(a * ref_arr + b - detected_arr)
                 if resid.max() <= 12.0:
-                    return a, b, True
+                    return a, b, True, float(resid.max())
         if len(detected_arr) >= 2:
             lo, hi = float(detected_arr.min()), float(detected_arr.max())
             ref_lo, ref_hi = float(ref_arr[0]), float(ref_arr[-1])
@@ -650,7 +697,7 @@ def grid_correct(gray, template):
                 a = (hi - lo) / ref_span
                 b = lo - a * ref_lo
                 if 0.85 <= a <= 1.15:
-                    return a, b, False
+                    return a, b, False, None
         return None
 
     def _fit_rows(detected_arr):
@@ -675,8 +722,9 @@ def grid_correct(gray, template):
         # complete reference span.
         return full or data_only
 
-    best_row_fit = None      # (ay, by, is_full)
+    best_row_fit = None      # (ay, by, is_full, resid_or_None)
     best_col_fits = None     # [(ref_lo, ref_hi, ax, bx), ...] per block
+    best_col_resid = None    # max residual (px) across column blocks, when solved
 
     for block_size, c_val in PARAM_SWEEP:
         rows, cols = detect_grid_lines(gray, block_size, c_val)
@@ -719,6 +767,10 @@ def grid_correct(gray, template):
                 fits.append((float(r_slice[0]), float(r_slice[-1]), ax, bx))
             if blocks_ok:
                 best_col_fits = fits
+                best_col_resid = float(max(
+                    np.abs(ax * ref_cols_arr[lo:hi] + bx - cols_arr[lo:hi]).max()
+                    for (lo, hi), (_, _, ax, bx) in zip(col_block_ranges, fits)
+                ))
 
         # Once rows have a full-quality fit and columns are solved, further
         # sweeping can't improve on either - stop early.
@@ -726,10 +778,24 @@ def grid_correct(gray, template):
             break
 
     if best_row_fit is None or best_col_fits is None:
-        return (lambda x, y: (x, y)), False
+        diag = {
+            "matched": False,
+            "row_full": bool(best_row_fit is not None and best_row_fit[2]),
+            "col_solved": bool(best_col_fits is not None),
+            "row_residual_px": (best_row_fit[3] if best_row_fit is not None else None),
+            "col_residual_px": best_col_resid,
+        }
+        return (lambda x, y: (x, y)), False, diag
 
-    ay, by, _row_full = best_row_fit
+    ay, by, row_full, row_resid = best_row_fit
     col_fits = best_col_fits
+    diag = {
+        "matched": True,
+        "row_full": bool(row_full),
+        "col_solved": True,
+        "row_residual_px": row_resid,
+        "col_residual_px": best_col_resid,
+    }
 
     def correct_xy(x, y, ay=ay, by=by, col_fits=col_fits):
         # Bubble template x-coordinates are column CENTRES, so they
@@ -746,10 +812,11 @@ def grid_correct(gray, template):
         )[2:4]
         return ax * x + bx, ay * y + by
 
-    return correct_xy, True
+    return correct_xy, True, diag
 
 
 def scan_sheet(image_path, template, debug_dir=None):
+    t_start = time.perf_counter()
     img = load_image(image_path)
     if img is None:
         raise FileNotFoundError(image_path)
@@ -768,7 +835,18 @@ def scan_sheet(image_path, template, debug_dir=None):
     # 0. Cross-check the border-based warp against this sheet's own
     # printed gridlines and correct any residual scale/offset drift before
     # sampling - see grid_correct() for why this matters.
-    correct_xy, grid_matched = grid_correct(gray, template)
+    correct_xy, grid_matched, grid_diag = grid_correct(gray, template)
+
+    # Template validation runs on the perspective-corrected sheet, BEFORE
+    # any bubble is sampled: if the corrected image doesn't structurally
+    # match template.json (wrong/partial/distorted sheet, or the border
+    # homography locked onto the wrong rectangle), every bubble coordinate
+    # would be sampled off a mismatched layout, so the capture is flagged
+    # for retake rather than silently scored. Derived from grid_correct's
+    # own robust line-matching diagnostics (no second detection pass).
+    # See template_validation.py.
+    template_check = validate_template(gray, template, grid_diag)
+
     corrected_bubbles = {
         key: dict(zip(("x", "y"), correct_xy(c["x"], c["y"])))
         for key, c in template["bubbles"].items()
@@ -804,6 +882,9 @@ def scan_sheet(image_path, template, debug_dir=None):
         sheet_notes.append(f"very low contrast across bubbles (range={score_range:.1f}); sheet may be blank/washed out")
     if not grid_matched:
         sheet_notes.append("could not verify alignment against printed gridlines; relying on border detection only")
+    if not template_check["valid"]:
+        reason = template_check["reasons"][0] if template_check["reasons"] else "structure did not match template"
+        sheet_notes.append(f"captured image failed template validation ({template_check['template_match']:.0f}% match): {reason}")
     if image_quality["low_res"]:
         sheet_notes.append(f"low-resolution source photo ({image_quality['source_width']}x{image_quality['source_height']}); "
                             f"relaxed confidence cutoff applied")
@@ -811,24 +892,11 @@ def scan_sheet(image_path, template, debug_dir=None):
         sheet_notes.append(f"heavy JPEG recompression detected (blockiness={image_quality['blockiness']}); "
                             f"typical of WhatsApp-forwarded images")
 
-    # NOTE (fixed): previously this only escalated to REVIEW on a grid-line
-    # mismatch when border_confidence was ALSO "low" - but a "high"-
-    # confidence border contour can still be off by enough pixels to
-    # mis-sample every bubble (that's the exact scenario grid_correct()
-    # exists to catch, per its own docstring). Verified against a
-    # synthetic sheet: with grid_matched=False and border_confidence=
-    # "high", a fully BLANK sheet was silently scored with several
-    # confident MULTI/OK calls instead of being flagged - i.e. the
-    # geometry safety net had a gap whenever the secondary (gridline)
-    # verification failed but the primary (border) detection looked fine.
-    # grid_matched=False now always forces REVIEW, matching the same
-    # standalone treatment already given to blur_ok/low_contrast, so a
-    # sheet whose bubble coordinates were never cross-verified is never
-    # silently trusted.
     force_review = (
         not align_quality["blur_ok"]
-        or not grid_matched
+        or (align_quality["border_confidence"] == "low" and not grid_matched)
         or low_contrast
+        or not template_check["valid"]
     )
 
     # 3. classify each question using the per-question relative comparison
@@ -875,12 +943,38 @@ def scan_sheet(image_path, template, debug_dir=None):
         Path(debug_dir).mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(Path(debug_dir) / f"{Path(image_path).stem}_debug.jpg"), dbg)
 
+        # On template-validation failure, persist the intermediate
+        # processing images so the exact geometry that was rejected can be
+        # inspected afterwards (the perspective-corrected sheet plus the
+        # illumination-normalized copy the gridline detector saw).
+        if not template_check["valid"]:
+            stem = Path(image_path).stem
+            cv2.imwrite(str(Path(debug_dir) / f"{stem}_FAILED_warped.jpg"), warped)
+            cv2.imwrite(str(Path(debug_dir) / f"{stem}_FAILED_normalized.jpg"), norm_gray)
+
+    processing_ms = round((time.perf_counter() - t_start) * 1000.0, 1)
+    # Structured debug log: corner/border confidence, blur, gridline/
+    # registration residuals, template-match %, and processing time.
+    log.info(
+        "%s: border=%s blur=%.1f grid_matched=%s template_match=%.1f%% "
+        "(row_full=%s col_solved=%s reg=%.2f border=%.2f) valid=%s time=%.1fms",
+        Path(image_path).stem, align_quality["border_confidence"],
+        align_quality["blur_score"], grid_matched, template_check["template_match"],
+        template_check["checks"]["row_full"],
+        template_check["checks"]["col_solved"],
+        template_check["checks"]["registration_score"],
+        template_check["checks"]["border_score"],
+        template_check["valid"], processing_ms,
+    )
+
     meta = {
         "threshold": threshold,
         "score_min": thr_info["score_min"],
         "score_max": thr_info["score_max"],
         "align_quality": align_quality,
         "grid_matched": grid_matched,
+        "template_validation": template_check,
+        "processing_ms": processing_ms,
         "sheet_notes": sheet_notes,
         "image_quality": image_quality,
     }

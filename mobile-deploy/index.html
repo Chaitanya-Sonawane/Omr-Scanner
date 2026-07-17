@@ -105,6 +105,28 @@
   </div>
 
   <div class="capture-flash" id="capture-flash" aria-hidden="true"></div>
+
+  <!-- Live validation checklist — shows all 7 checks with real-time pass/fail state.
+       Collapsed by default; expands on first non-ready frame, auto-hides once all pass. -->
+  <div class="validation-panel" id="validation-panel" aria-label="Validation checklist" data-state="hidden">
+    <div class="validation-header">
+      <span class="validation-title">Validation</span>
+      <button class="validation-toggle" id="validation-toggle" aria-label="Toggle checklist">
+        <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <ul class="validation-list" id="validation-list" role="list">
+      <!-- Populated dynamically by app.js -->
+    </ul>
+  </div>
+
+  <!-- Distance arrow guide — appears when sheet is detected but coverage is off -->
+  <div class="distance-guide" id="distance-guide" aria-hidden="true">
+    <svg class="distance-arrow" id="distance-arrow" viewBox="0 0 32 32" width="32" height="32">
+      <!-- Arrow rendered by JS based on too-far / too-close state -->
+    </svg>
+    <span class="distance-label" id="distance-label"></span>
+  </div>
 </section>
 
 <!-- ============ PROCESSING ============ -->
