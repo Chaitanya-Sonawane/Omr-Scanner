@@ -128,6 +128,23 @@
     if (frame) frame.dataset.state = verdict.ready ? 'ready' : (state === 'searching' ? 'searching' : 'warn');
   }
 
+  // Temporary live diagnostics readout: shows the raw per-frame detection
+  // numbers so a failure can be diagnosed from a single screenshot instead
+  // of guessed at from a photo of the sheet. Safe to remove once auto-capture
+  // reliability is confirmed - purely cosmetic, doesn't affect any gating.
+  function setDebug(metrics) {
+    const el = $('#status-debug');
+    if (!el) return;
+    if (!metrics) { el.textContent = ''; return; }
+    const pct = (v) => v == null ? '—' : `${(v * 100).toFixed(0)}%`;
+    el.textContent = `found=${metrics.sheetFound ? metrics.method : (metrics.offFrame ? 'offFrame' : 'no')} `
+      + `area=${pct(metrics.areaFrac)} aspectErr=${pct(metrics.aspectErr)} `
+      + `clipped=${metrics.clipped ? 'Y' : 'N'} skewed=${metrics.skewed ? 'Y' : 'N'} `
+      + `sharp=${metrics.sharpness != null ? metrics.sharpness.toFixed(0) : '—'} `
+      + `bright=${metrics.brightness != null ? metrics.brightness.toFixed(0) : '—'} `
+      + `motion=${metrics.motion != null ? metrics.motion.toFixed(1) : '—'}`;
+  }
+
   // ---------------- validation checklist ----------------
   let _panelCollapsed = false;
 
@@ -277,7 +294,7 @@
 
       state.camera = cam;
       state.capturing = false;
-      state.stability = new OMRGuidance.StabilityTracker(() => triggerCapture(cam, myToken));
+      state.stability = new OMRGuidance.StabilityTracker(() => triggerCapture(cam, myToken, false));
 
       // The camera preview is live. Enable the manual shutter and clear the
       // "Starting camera…" banner IMMEDIATELY - this no longer waits for
@@ -288,7 +305,7 @@
       const captureBtn = $('#btn-capture');
       if (captureBtn) {
         captureBtn.disabled = false;
-        captureBtn.onclick = () => triggerCapture(cam, myToken);
+        captureBtn.onclick = () => triggerCapture(cam, myToken, true);
       }
       $('#status-text').textContent = 'Point the camera at the OMR sheet';
       $('#status-detail').textContent = 'Tap Capture when the whole sheet is inside the frame.';
@@ -312,6 +329,7 @@
           $('#status-banner').dataset.state = 'warn';
           $('#status-text').textContent = 'Live guidance unavailable';
           $('#status-detail').textContent = 'Frame the whole sheet and tap Capture manually.';
+          setDebug(null);
           return;
         }
         // OpenCV is ready: start the live guidance / auto-capture loop.
@@ -319,6 +337,7 @@
           if (myToken !== state.cameraToken || state.capturing) return;
           drawHud(metrics, verdict);
           setStatus(verdict);
+          setDebug(metrics);
           updateValidationPanel(verdict);
           updateDistanceGuide(verdict);
           const progress = state.stability.update(metrics, verdict);
@@ -353,7 +372,7 @@
     el.classList.remove('is-flashing');
   }
 
-  async function triggerCapture(cam, token) {
+  async function triggerCapture(cam, token, manual = false) {
     if (state.capturing || !state.camera || token !== state.cameraToken) return;
     state.capturing = true;
     // Prevent a double-tap on the manual shutter (or a manual tap racing the
@@ -406,7 +425,15 @@
       await cam.unlockAfterCapture();
       if (stale()) return;
 
-      if (!validation.pass) {
+      // A MANUAL shutter tap is an explicit "capture this now" instruction.
+      // The local pre-upload gate exists to stop AUTO-capture from silently
+      // firing on a bad frame, but when the proctor deliberately taps
+      // Capture we must honour it and let the backend be the quality judge -
+      // otherwise a sheet whose corners the lightweight in-browser detector
+      // can't find (angled sheet, cropped edge, patterned desk, OpenCV not
+      // loaded) can never be captured at all, which is exactly the "it won't
+      // even capture" symptom. Skip the local reject for manual captures.
+      if (!validation.pass && !manual) {
         // Reject locally - never upload a capture we already know is bad.
         state.capturing = false;
         state.stability.reset();

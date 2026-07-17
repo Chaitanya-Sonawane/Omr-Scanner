@@ -185,8 +185,38 @@ const OMRQuality = (() => {
       edges.delete();
     }
 
+    // Neither pass found a CLOSED 4-corner quad. Before giving up entirely,
+    // check whether that's because there's no document here at all, or
+    // because a large document-shaped blob IS present but is running off
+    // one or more sides of the frame - in which case its contour is open
+    // (cut by the image boundary) and can never approxPolyDP down to 4
+    // points, no matter how long the user holds still. Distinguishing this
+    // from "nothing here yet" lets guidance.js tell the user to physically
+    // back up instead of endlessly showing "point camera at the sheet".
+    let offFrame = false;
+    if (!result) {
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(thresh, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+      const total = contours.size();
+      const margin = CFG.edgeMarginFrac * 2; // a bit more lenient than the strict "clipped" check
+      for (let i = 0; i < total; i++) {
+        const c = contours.get(i);
+        const area = cv.contourArea(c);
+        if (area / frameArea >= 0.25) {
+          const r = cv.boundingRect(c);
+          const touchesEdge = r.x <= w * margin || r.y <= h * margin ||
+            (r.x + r.width) >= w * (1 - margin) || (r.y + r.height) >= h * (1 - margin);
+          if (touchesEdge) { offFrame = true; c.delete(); break; }
+        }
+        c.delete();
+      }
+      contours.delete(); hierarchy.delete();
+    }
+
     blurred.delete(); thresh.delete(); kernel.delete();
-    return result; // null if nothing plausible found
+    if (result) return result;
+    return offFrame ? { offFrame: true } : null; // null if nothing plausible at all
   }
 
   function laplacianVariance(cv, grayMat, roiRect) {
@@ -259,10 +289,12 @@ const OMRQuality = (() => {
    */
   function analyzeFrame(cv, grayMat, prevGrayMat) {
     const w = grayMat.cols, h = grayMat.rows;
-    const found = detectSheetQuad(cv, grayMat);
+    const raw = detectSheetQuad(cv, grayMat);
+    const found = raw && raw.quad ? raw : null;
 
     const metrics = {
       sheetFound: !!found,
+      offFrame: !found && !!(raw && raw.offFrame), // large document-like blob present but running off an edge
       method: found ? found.method : null,
       quad: found ? found.quad : null,
       areaFrac: found ? quadArea(found.quad) / (w * h) : 0,

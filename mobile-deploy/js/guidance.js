@@ -67,8 +67,10 @@ const OMRGuidance = (() => {
     const steadyOk = metrics.motion <= CFG.maxMotion;
     const steadyHint = steadyOk ? 'Steady' : `Hold still (motion=${metrics.motion ? metrics.motion.toFixed(1) : '—'})`;
 
+    const sheetHint = sheetOk ? 'Sheet detected' : (metrics.offFrame ? 'Sheet runs off the frame — move back' : 'Point camera at OMR sheet');
+
     return [
-      { id: 'sheet',    label: 'Sheet visible',       pass: sheetOk,    hint: sheetOk ? 'Sheet detected' : 'Point camera at OMR sheet' },
+      { id: 'sheet',    label: 'Sheet visible',       pass: sheetOk,    hint: sheetHint },
       { id: 'corners',  label: 'Corners detected',    pass: cornersOk,  hint: cornersOk ? 'All 4 corners found' : (sheetOk ? 'Corners clipped — move back' : 'Waiting for sheet') },
       { id: 'template', label: 'Sheet aligned',       pass: templateOk, hint: templateHint },
       { id: 'distance', label: 'Correct distance',    pass: distOk,     hint: distHint },
@@ -83,6 +85,18 @@ const OMRGuidance = (() => {
     const checks = evaluateChecks(metrics);
 
     if (!metrics.sheetFound) {
+      if (metrics.offFrame) {
+        // A large document-shaped region IS present, but it runs off one or
+        // more edges of the frame - its contour is physically open (cut by
+        // the image boundary) and can never resolve to a closed 4-point
+        // quad, so waiting longer here never helps. This is NOT the same
+        // "not found yet" state - it needs a different fix (move back /
+        // zoom out), so it gets its own code/message rather than silently
+        // falling through to the generic "point camera at sheet" banner.
+        return { ready: false, state: 'warn', code: 'off_frame',
+          message: 'Move back — the sheet doesn\u2019t fit in the frame',
+          detail: 'Sheet edges are running off the screen', checks };
+      }
       return { ready: false, state: 'searching', code: 'not_found',
         message: 'Point the camera at the OMR sheet',
         detail: 'Sheet not detected yet', checks };
