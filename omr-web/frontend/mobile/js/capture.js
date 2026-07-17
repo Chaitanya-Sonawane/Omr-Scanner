@@ -147,10 +147,16 @@ const OMRCapture = (() => {
       }
       this.stopped = false;
 
-      // Now wait for OpenCV - the preview is already live, so a slow or
-      // failed download no longer blanks the screen.
-      this.cv = await cvPromise;
-      if (this.cv) console.log('[Camera] OpenCV loaded');
+      // Do NOT await OpenCV here. Previously start() did
+      // `this.cv = await cvPromise;`, so start() (and the caller's
+      // `await cam.start()`) only resolved AFTER the ~10 MB OpenCV.js WASM
+      // finished downloading. On a slow/blocked mobile connection that left
+      // the scanner frozen on "Loading scanner…"/"Requesting camera
+      // permission…" with no usable camera. Instead we resolve start() as
+      // soon as the live preview is up and expose `cvReady` so callers can
+      // start live guidance in the background; manual capture works even if
+      // OpenCV never loads.
+      this.cvReady = cvPromise.then((cv) => { this.cv = cv; if (cv) console.log('[Camera] OpenCV loaded'); return cv; });
 
       // Mobile browsers/OSes can reclaim the camera at any time - the tab
       // is backgrounded, another app opens the camera, the device sleeps,

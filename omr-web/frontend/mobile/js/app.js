@@ -224,24 +224,33 @@
         $('#status-detail').textContent = 'The camera stream stopped unexpectedly — close and reopen the camera to continue.';
       };
 
-      if (cam.cv) {
-        cam.runAnalysisLoop((metrics) => {
-          if (myToken !== state.cameraToken || state.capturing) return;
-          const result = state.stability.update(metrics, performance.now());
-          const verdict = verdictFromGate(result);
-          drawHud(metrics, verdict);
-          setStatus(verdict);
-          renderChecklist(result.checks);
-          setRing(result.holdProgress);
-        });
-      } else {
-        // OpenCV.js failed to load (offline / blocked CDN): live guidance
-        // and auto-capture are unavailable, but the camera preview works
-        // and the user can still capture manually.
-        $('#status-banner').dataset.state = 'warn';
-        $('#status-text').textContent = 'Live guidance unavailable';
-        $('#status-detail').textContent = 'Frame the sheet and tap Capture manually.';
-      }
+      // OpenCV loads in the BACKGROUND (see capture.js) so the scanner is
+      // usable immediately - manual capture works right away and the camera
+      // never gets stuck on "Loading scanner…". Once the vision engine is
+      // ready we start the live guidance / auto-capture loop; if it fails to
+      // load we tell the user guidance is unavailable but manual capture
+      // still works.
+      cam.cvReady.then((cv) => {
+        if (myToken !== state.cameraToken) return; // camera was closed/superseded
+        if (cv) {
+          cam.runAnalysisLoop((metrics) => {
+            if (myToken !== state.cameraToken || state.capturing) return;
+            const result = state.stability.update(metrics, performance.now());
+            const verdict = verdictFromGate(result);
+            drawHud(metrics, verdict);
+            setStatus(verdict);
+            renderChecklist(result.checks);
+            setRing(result.holdProgress);
+          });
+        } else {
+          // OpenCV.js failed to load (offline / blocked CDN): live guidance
+          // and auto-capture are unavailable, but the camera preview works
+          // and the user can still capture manually.
+          $('#status-banner').dataset.state = 'warn';
+          $('#status-text').textContent = 'Live guidance unavailable';
+          $('#status-detail').textContent = 'Frame the sheet and tap Capture manually.';
+        }
+      });
     } catch (e) {
       // Never leave the user stuck on "Starting camera…" - surface any
       // unexpected failure on the status banner instead.
