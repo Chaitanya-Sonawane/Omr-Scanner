@@ -12,7 +12,7 @@
 const OMRGuidance = (() => {
   const CFG = OMRQuality.CFG;
 
-  const STABILITY_MS = 900;         // continuous "ready" time required before auto-capture
+  const STABILITY_MS = 600;         // continuous "ready" time required before auto-capture (500-800ms window: fast but motion-blur safe)
   const DRIFT_PX_TOL = 0.03;        // fractional corner drift (of frame diag) allowed during stability hold
 
   // Ordered by priority: first failing check wins the on-screen message.

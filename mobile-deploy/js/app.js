@@ -128,6 +128,82 @@
     if (frame) frame.dataset.state = verdict.ready ? 'ready' : (state === 'searching' ? 'searching' : 'warn');
   }
 
+  // ---------------- validation checklist ----------------
+  let _panelCollapsed = false;
+
+  // Lazily build list items once, then update them in-place each frame to
+  // avoid trashing the DOM at 9fps which causes layout thrash on mobile.
+  let _checkItems = null;
+
+  function _buildCheckItems(checks) {
+    const list = $('#validation-list');
+    list.innerHTML = checks.map(c => `
+      <li class="validation-item validation-item--idle" data-id="${c.id}" role="listitem">
+        <span class="vi-dot" aria-hidden="true"></span>
+        <span class="vi-text">
+          <span class="vi-label">${c.label}</span>
+          <span class="vi-hint"></span>
+        </span>
+      </li>`).join('');
+    _checkItems = {};
+    checks.forEach(c => { _checkItems[c.id] = list.querySelector(`[data-id="${c.id}"]`); });
+  }
+
+  function updateValidationPanel(verdict) {
+    const panel = $('#validation-panel');
+    const checks = verdict.checks;
+    if (!checks) return;
+
+    // Build list items on first call.
+    if (!_checkItems) _buildCheckItems(checks);
+
+    const allPass = checks.every(c => c.pass);
+
+    if (allPass) {
+      panel.dataset.state = 'all-pass';
+      panel.querySelector('.validation-title').textContent = '✓ All checks pass';
+      return;
+    }
+
+    // Show panel if hidden once sheet-related activity starts.
+    if (panel.dataset.state === 'hidden') {
+      panel.dataset.state = _panelCollapsed ? 'collapsed' : 'expanded';
+    } else if (panel.dataset.state === 'all-pass') {
+      panel.dataset.state = _panelCollapsed ? 'collapsed' : 'expanded';
+    }
+
+    panel.querySelector('.validation-title').textContent = 'Validation';
+
+    // Update each item in-place.
+    checks.forEach(c => {
+      const el = _checkItems[c.id];
+      if (!el) return;
+      el.className = `validation-item validation-item--${c.pass ? 'pass' : 'fail'}`;
+      el.querySelector('.vi-hint').textContent = c.hint || '';
+    });
+  }
+
+  function updateDistanceGuide(verdict) {
+    const guide = $('#distance-guide');
+    const arrow = $('#distance-arrow');
+    const label = $('#distance-label');
+
+    const code = verdict.code;
+    if (code === 'too_far') {
+      // Arrow pointing toward camera (up = "move closer")
+      arrow.innerHTML = '<path d="M16 26V8M8 15l8-8 8 8" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>';
+      label.textContent = 'Move closer';
+      guide.classList.add('is-visible');
+    } else if (code === 'too_close') {
+      // Arrow pointing away (down = "move back")
+      arrow.innerHTML = '<path d="M16 6v18M8 17l8 8 8-8" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>';
+      label.textContent = 'Move back';
+      guide.classList.add('is-visible');
+    } else {
+      guide.classList.remove('is-visible');
+    }
+  }
+
   function setRing(progress) {
     const circumference = 119.4; // 2 * PI * r(19)
     const fill = $('#ring-fill');
@@ -216,6 +292,8 @@
         if (myToken !== state.cameraToken || state.capturing) return;
         drawHud(metrics, verdict);
         setStatus(verdict);
+        updateValidationPanel(verdict);
+        updateDistanceGuide(verdict);
         const progress = state.stability.update(metrics, verdict);
         setRing(progress);
       });
@@ -229,6 +307,11 @@
     if (state.camera) state.camera.stop();
     state.camera = null;
     state.stability = null;
+    // Reset validation panel so it starts fresh on next camera open.
+    const panel = $('#validation-panel');
+    if (panel) panel.dataset.state = 'hidden';
+    _checkItems = null;
+    $('#distance-guide').classList.remove('is-visible');
     showView('home');
     refreshHomeStats();
   }
@@ -256,6 +339,21 @@
     const stale = () => token !== state.cameraToken;
 
     try {
+      // Give the immediate GREEN "captured" signal the instant auto-capture
+      // fires — the four corners were already detected and the sheet held
+      // stable/sharp for the full stability window, so acknowledge the shot
+      // to the user right away, BEFORE the (post-capture) full-res
+      // verification runs. This makes the capture feel instantaneous instead
+      // of leaving the banner on a neutral "hold still" state until upload.
+      $('#status-banner').dataset.state = 'ready';
+      $('#align-frame').dataset.state = 'ready'; // corner beams flip to green
+      $('#status-text').textContent = 'Captured ✓';
+      $('#status-detail').textContent = 'Sheet locked — processing…';
+      // Hide the validation panel during processing — it's no longer relevant.
+      const vPanel = $('#validation-panel');
+      if (vPanel) vPanel.dataset.state = 'hidden';
+      $('#distance-guide').classList.remove('is-visible');
+
       await cam.lockForCapture();
       if (stale()) return;
       await flash();
@@ -419,11 +517,13 @@
     // return straight to a live camera so the proctor can rescan.
     state.results.pop();
     state.sheetsScanned = Math.max(0, state.sheetsScanned - 1);
+    _checkItems = null;
     openCamera();
   }
 
   function scanNextSheet() {
     state.capturing = false;
+    _checkItems = null;
     openCamera();
   }
 
@@ -478,6 +578,22 @@
   $('#btn-next').addEventListener('click', scanNextSheet);
   $('#btn-finish-batch').addEventListener('click', finishBatch);
   $('#btn-new-session').addEventListener('click', startNewSession);
+
+  // Validation checklist toggle.
+  const _toggleBtn = $('#validation-toggle');
+  if (_toggleBtn) {
+    _toggleBtn.addEventListener('click', () => {
+      const panel = $('#validation-panel');
+      const current = panel.dataset.state;
+      if (current === 'expanded') {
+        _panelCollapsed = true;
+        panel.dataset.state = 'collapsed';
+      } else if (current === 'collapsed') {
+        _panelCollapsed = false;
+        panel.dataset.state = 'expanded';
+      }
+    });
+  }
 
   loadConfig();
 

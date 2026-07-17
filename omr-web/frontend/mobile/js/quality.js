@@ -101,10 +101,26 @@ const OMRQuality = (() => {
       cv.findContours(mat, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
       let best = null; // {score, quad, method}
-      const n = Math.min(contours.size(), 25);
-      for (let i = 0; i < n; i++) {
+
+      // RETR_LIST returns contours in discovery order, NOT by size. The
+      // sheet outline is (nearly) always the largest plausible contour,
+      // so rank all contours by area first and only examine the biggest
+      // few. Iterating the raw discovery order and capping at the first
+      // 25 could skip the real sheet entirely on a cluttered frame,
+      // causing intermittent "sheet not detected" even when it's clearly
+      // in view (which in turn stalls live auto-capture validation).
+      const total = contours.size();
+      const indexed = [];
+      for (let i = 0; i < total; i++) {
         const c = contours.get(i);
-        const area = cv.contourArea(c);
+        indexed.push({ i, area: cv.contourArea(c) });
+        c.delete();
+      }
+      indexed.sort((a, b) => b.area - a.area);
+      const n = Math.min(indexed.length, 25);
+      for (let j = 0; j < n; j++) {
+        const c = contours.get(indexed[j].i);
+        const area = indexed[j].area;
         const frac = area / frameArea;
         if (frac < CFG.minAreaFrac || frac > 0.995) { c.delete(); continue; }
 

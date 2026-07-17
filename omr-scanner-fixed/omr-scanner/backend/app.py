@@ -178,12 +178,25 @@ def _summarize(rows: list[dict], meta: dict) -> dict:
         for r in rows
         if r["Status"] in ("REVIEW", "MULTI") or r["Confidence"] < AMBIGUOUS_QUESTION_THRESHOLD
     ]
-    retake_recommended = avg_conf < RETAKE_CONFIDENCE_THRESHOLD or len(flagged) > N_QUESTIONS * 0.25
+    # A capture that failed post-homography template validation is never
+    # trusted regardless of the (meaningless, since bubbles were sampled off
+    # a mismatched layout) confidence average - it always recommends a retake.
+    template_validation = meta.get("template_validation", {})
+    template_valid = template_validation.get("valid", True)
+    retake_recommended = (
+        avg_conf < RETAKE_CONFIDENCE_THRESHOLD
+        or len(flagged) > N_QUESTIONS * 0.25
+        or not template_valid
+    )
     return {
         "avg_confidence": round(avg_conf, 1),
         "flagged_count": len(flagged),
         "flagged_questions": flagged,
         "retake_recommended": retake_recommended,
+        "template_valid": template_valid,
+        "template_match": template_validation.get("template_match"),
+        "template_validation": template_validation,
+        "processing_ms": meta.get("processing_ms"),
         "sheet_notes": meta.get("sheet_notes", []),
         "align_quality": meta.get("align_quality", {}),
         "image_quality": meta.get("image_quality", {}),

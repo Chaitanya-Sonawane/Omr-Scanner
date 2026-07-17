@@ -258,6 +258,16 @@
     const stale = () => token !== state.cameraToken;
 
     try {
+      // Give the immediate GREEN "captured" signal the instant auto-capture
+      // fires — the four corners were already detected and the sheet held
+      // stable/sharp for the full stability window, so acknowledge the shot
+      // to the user right away, BEFORE the (post-capture) full-res
+      // verification runs. This makes the capture feel instantaneous instead
+      // of leaving the banner on a neutral "hold still" state until upload.
+      $('#status-banner').dataset.state = 'ready';
+      $('#status-text').textContent = 'Captured ✓';
+      $('#status-detail').textContent = 'Sheet locked — processing…';
+
       await cam.lockForCapture();
       if (stale()) return;
       await flash();
