@@ -118,10 +118,39 @@ def process_omr_image(image_path: str) -> tuple:
     """
     Scan image directly with OMR scanner — no preprocessing.
     Preprocessing (resize/warp) distorts column positions and causes wrong option detection.
-    Returns (answers, flags, raw_data)
+    Returns (answers, flags, raw_data, confidence)
     """
-    answers, flags, raw, _conf = omr_scanner.detect_bubbles(image_path)
-    return answers, flags, raw
+    answers, flags, raw, conf = omr_scanner.detect_bubbles(image_path)
+    return answers, flags, raw, conf
+
+
+# Confidence threshold (0-100) below which an otherwise-answered question is
+# surfaced as "low_confidence" so downstream systems can route it to human
+# review. Mirrors the internal scanner threshold used for the low_confidence
+# flag; kept here so the API's status contract is explicit and stable.
+LOW_CONFIDENCE_THRESHOLD = 45
+
+
+def derive_question_status(answer, flag, conf) -> str:
+    """
+    Map the scanner's existing per-question outputs (answer, internal flag and
+    confidence score) into a first-class, structured status for the API:
+
+        confident            - a clear, high-confidence single mark
+        blank                - no mark detected for this question
+        ambiguous_multi_mark - more than one mark detected (needs review)
+        low_confidence       - a mark was read but confidence is below threshold
+
+    This is a *surfacing* mapping over signals the pipeline already produces;
+    it does not re-score bubbles or alter detection.
+    """
+    if flag == "multi_mark":
+        return "ambiguous_multi_mark"
+    if answer is None or answer == "":
+        return "blank"
+    if flag == "low_confidence" or (conf is not None and conf < LOW_CONFIDENCE_THRESHOLD):
+        return "low_confidence"
+    return "confident"
 
 
 class SessionData:
@@ -223,7 +252,7 @@ async def set_answer_key_image(
             raise HTTPException(status_code=400, detail="Invalid image file")
         
         # Call your OMR scanner function with enhancement
-        answers, flags, raw = process_omr_image(tmp_path)
+        answers, flags, raw, _conf = process_omr_image(tmp_path)
         
         if answers is None:
             raise HTTPException(status_code=400, detail="Could not detect bubbles in image")
@@ -336,7 +365,7 @@ async def process_sheets(session_id: str):
             
             try:
                 # Process the sheet with enhancement
-                answers, flags, raw = process_omr_image(sheet["path"])  # process_omr_image returns 3 values
+                answers, flags, raw, conf_scores = process_omr_image(sheet["path"])
                 
                 if answers is None:
                     sheet["status"] = "ERROR"
@@ -356,9 +385,13 @@ async def process_sheets(session_id: str):
                 total_questions = len(correct_answers)
                 detailed_answers = {}
 
+                needs_review = 0
                 for q_num, correct_ans in correct_answers.items():
                     student_ans = student_answers.get(str(q_num), "")
                     flag = flags.get(int(q_num)) or flags.get(str(q_num))
+                    q_conf = conf_scores.get(int(q_num))
+                    if q_conf is None:
+                        q_conf = conf_scores.get(str(q_num))
                     if flag == "multi_mark":
                         marked_display = "MULTI"
                         is_correct = False
@@ -367,11 +400,23 @@ async def process_sheets(session_id: str):
                         is_correct = student_ans != "" and student_ans == correct_ans
                     if is_correct:
                         score += 1
+
+                    # First-class per-question status derived from existing
+                    # scanner signals (flag + confidence). Lets downstream
+                    # systems flag uncertain reads for manual review instead
+                    # of silently trusting them.
+                    status = derive_question_status(
+                        student_ans if student_ans != "" else None, flag, q_conf)
+                    if status != "confident":
+                        needs_review += 1
+
                     detailed_answers[q_num] = {
                         "marked": marked_display,
                         "correct": correct_ans,
                         "is_correct": is_correct,
                         "flag": flag or None,
+                        "status": status,
+                        "confidence": q_conf if q_conf is not None else None,
                     }
                 
                 # Calculate confidence (1.0 if no flags, lower if there are issues)
@@ -389,6 +434,8 @@ async def process_sheets(session_id: str):
                     "answers": detailed_answers,
                     "flags": flags,
                     "confidence": confidence,
+                    "needs_review": needs_review,
+                    "review_required": needs_review > 0,
                     "timestamp": datetime.now().isoformat()
                 }
                 
